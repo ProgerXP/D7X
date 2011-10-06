@@ -34,6 +34,12 @@ type
       Measure:  WideString;
     end;
   end;
+  
+  TCallOnEachLineOptions_OO = record
+    Callback: TCallOnEachLineInCallback_OO;
+    UserData: DWord;
+    EOLN: WIdeChar;
+  end;
 
 // todo: make Lower/UpperCase wrapper for Wide*Case.
 // todo: reconvertion table for Lower/UpperCase?
@@ -101,14 +107,16 @@ function PosLastW(const Substr, Str: WideString; Start: Word = 1): Integer;
 function PosW(const Substr, Str: WideString; Start: Word = 1): Integer;
 
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
-function Trim(Str: WideString): WideString;
-function TrimLeft(Str: WideString): WideString;
-function TrimRight(Str: WideString): WideString;
+function Trim(Str: WideString; const Chars: WideString): WideString; overload;
+function TrimLeft(Str: WideString; const Chars: WideString): WideString; overload;
+function TrimRight(Str: WideString; const Chars: WideString): WideString; overload;      
+function ConsistsOfChars(const Str, Chars: WideString): Boolean;
 
 function CallOnEachLineIn(Str: WideString; const Callback: TCallOnEachLineInCallback;
   const UserData: Pointer = NIL): DWord; overload;
 function CallOnEachLineIn(Str: WideString; const Callback: TCallOnEachLineInCallback_OO;
   const UserData: DWord = 0): DWord; overload;
+function CallOnEachLineIn(Str: WideString; Options: TCallOnEachLineOptions_OO): DWord; overload;
 
 function CompareStr(const S1, S2: WideString; Flags: DWord = 0): Integer;
 function CompareText(const S1, S2: WideString): Integer;
@@ -413,37 +421,50 @@ begin
       Result[I] := sysutils.Trim(Result[I])
 end;
 
-function Trim(Str: WideString): WideString;
+function Trim(Str: WideString; const Chars: WideString): WideString;
 var
   Start, Finish: Word;
 begin
   Start := 1;
-  while (Start <= Length(Str)) and (Str[Start] <= ' ') do
+  while (Start <= Length(Str)) and (PosW(Str[Start], Chars) <> 0) do
     Inc(Start);
   Finish := Length(Str);
-  while (Finish > Start) and (Str[Finish] <= ' ') do
+  while (Finish > Start) and (PosW(Str[Finish], Chars) <> 0) do
     Dec(Finish);
   Result := Copy(Str, Start, Finish - Start + 1)
 end;
 
-function TrimLeft(Str: WideString): WideString;
+function TrimLeft(Str: WideString; const Chars: WideString): WideString;
 var
   Start: Word;
 begin
   Start := 1;
-  while (Start <= Length(Str)) and (Str[Start] <= ' ') do
+  while (Start <= Length(Str)) and (PosW(Str[Start], Chars) <> 0) do
     Inc(Start);
   Result := Copy(Str, Start, $FFFF)
 end;
 
-function TrimRight(Str: WideString): WideString;
+function TrimRight(Str: WideString; const Chars: WideString): WideString;
 var
   Finish: Word;
 begin
   Finish := Length(Str);
-  while (Finish >= 1) and (Str[Finish] <= ' ') do
+  while (Finish >= 1) and (PosW(Str[Finish], Chars) <> 0) do
     Dec(Finish);
   Result := Copy(Str, 1, Finish)
+end;
+
+function ConsistsOfChars(const Str, Chars: WideString): Boolean;
+var
+  I: Integer;
+begin            
+  Result := False;
+
+  for I := 1 to Length(Str) do
+    if PosW(Str[I], Chars) = 0 then
+      Exit;
+
+  Result := True;
 end;
 
 function EscapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
@@ -916,20 +937,30 @@ end;
 function CallOnEachLineIn(Str: WideString; const Callback: TCallOnEachLineInCallback_OO;
   const UserData: DWord = 0): DWord;
 var
+  Options: TCallOnEachLineOptions_OO;
+begin
+  Options.Callback := Callback;
+  Options.UserData := UserData;
+  Options.EOLN := #10;
+  Result := CallOnEachLineIn(Str, Options);
+end;
+
+function CallOnEachLineIn(Str: WideString; Options: TCallOnEachLineOptions_OO): DWord;
+var
   I, PrevNewLine: DWord;
 begin
   Result := 0;
   PrevNewLine := 1;
 
-  if (Str <> '') and (Str[Length(Str)] <> #10) and (Str[Length(Str)] <> #13) then
-    Str := Str + #10;
+  if (Str <> '') and (Str[Length(Str)] <> Options.EOLN) then
+    Str := Str + Options.EOLN;
 
   for I := 1 to Length(Str) do
-    if (Str[I] = #10) or (Str[I] = #13) then
+    if Str[I] = Options.EOLN then
     begin
       Inc(Result);
       if I > PrevNewLine then
-        if Callback(Copy(Str, PrevNewLine, I - PrevNewLine), UserData) then
+        if Options.Callback(TrimRight( Copy(Str, PrevNewLine, I - PrevNewLine), #13 ), Options.UserData) then
           Break;
       PrevNewLine := I + 1;
     end;

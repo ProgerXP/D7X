@@ -19,6 +19,17 @@ type
     property FileName: WideString read FFileName;
   end;
 
+const
+  fmOpenRead       = SysUtils.fmOpenRead;
+  fmOpenWrite      = SysUtils.fmOpenWrite;
+  fmOpenReadWrite  = SysUtils.fmOpenReadWrite;
+
+  fmShareCompat    = SysUtils.fmShareCompat;
+  fmShareExclusive = SysUtils.fmShareExclusive;
+  fmShareDenyWrite = SysUtils.fmShareDenyWrite;
+  fmShareDenyRead  = SysUtils.fmShareDenyRead;
+  fmShareDenyNone  = SysUtils.fmShareDenyNone;
+
 implementation
 
 // SysUtils.pas: 4788
