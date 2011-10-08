@@ -86,7 +86,8 @@ function PadTextWithVariableLineLength(const Str: WideString; const NewLine, Pad
   const LineLengths: array of Integer): WideString;
 
 function StrRepeat(const Str: WideString; Times: DWord): WideString;
-// it's like PHP's strtr(). Will remove chars if ToChars is shorter than FromChars.
+// it's like PHP's strtr() - replacing chars from CharChars with those in ToChars or
+// removes them if ToChars is shorter than FromChars.
 function StrReplace(const Str: WideString; FromChars, ToChars: WideString): WideString; overload;
 function StrReplace(const S, OldPattern, NewPattern: WideString;
   Flags: TReplaceFlags): WideString; overload;

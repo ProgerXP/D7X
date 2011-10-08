@@ -63,15 +63,9 @@ function ParamStrW(Index: Integer): WideString;
 function ParamStrFrom(CmdLine: WideString; Index: Integer): WideString;
 function ApplicationPath: WideString;  // alias to ExtractFilePath(ParamStrW(0)).
 
-procedure FindMask(Mask: WideString; Result: TStringsW); overload;
-procedure FindMask(Mask: WideString; Result: TStrings); overload;
-
-procedure StringsW2J(const Src: TStringsW; const Dest: TStrings);
-procedure FindAll(BasePath, Mask: WideString; Result: TStringsW); overload;
-procedure FindAll(BasePath, Mask: WideString; Result: TStrings); overload;
-
-procedure FindAllRelative(BasePath, Mask: WideString; Result: TStringsW); overload;
-procedure FindAllRelative(BasePath, Mask: WideString; Result: TStrings); overload;
+procedure FindMask(Mask: WideString; Result: TStringsW);
+procedure FindAll(BasePath, Mask: WideString; Result: TStringsW);
+procedure FindAllRelative(BasePath, Mask: WideString; Result: TStringsW);
 
 function IsInvalidPathChar(const Char: WideChar): Boolean;
 function MakeValidFileName(const Str: WideString; const SubstitutionChar: WideChar = '-'): WideString;
@@ -107,7 +101,6 @@ function RemoveDirectory(Path: WideString): Boolean;
 
 function ForceDirectories(Path: WideString): Boolean;
 function MkDir(Path: WideString): Boolean;
-procedure CleanDirectory(PathOrMask: WideString; MaxDirectorySize: DWord);
 
 function ReadRegValue(Root: DWord; const Path, Key: WideString): WideString;
 
@@ -121,7 +114,6 @@ function FadeSettings(Form: TForm; MinAlpha, MaxAlpha: Byte;
   Step: ShortInt = 15): TFormFadeSettings; overload;
 procedure FormFade(const Settings: TFormFadeSettings);
 
-function InputQueryW(const ACaption, APrompt: WideString; var Value: WideString): Boolean;
 function BrowseForFolder(const Caption, DefaultPath: WideString; const OwnerWindow: HWND): WideString;
 
 const
@@ -146,10 +138,7 @@ var
 
 implementation
 
-uses MMSystem, Math, ShellAPI, ShlObj,
-     Collections,  // Collections is used for CleanDirectory.
-     StrUtils,     // StrUtils is used for PosLast (but not PosLastW).
-     JReconvertor, Labels, Dialogs, StdCtrls, Controls; // InputQueryW uses.
+uses MMSystem, Math, ShellAPI, ShlObj;
 
 procedure AdjustArray(var DWArray: array of DWord; const Delta: Integer; MinValueToAdjust: DWord = 0);
 var
@@ -546,55 +535,6 @@ begin
       Result[I] := Copy(Result[I], Length(BasePath) + 1, Length(Result[I]))
 end;
 
-procedure StringsW2J;
-var
-  I: Word;
-begin
-  if Src.Count <> 0 then
-    for I := 0 to Src.Count - 1 do
-      Dest.Add( Wide2JIS(Src[I]) )
-end;
-
-procedure FindMask(Mask: WideString; Result: TStrings);
-var
-  S: TStringListW;
-begin
-  S := TStringListW.Create;
-  try
-    FindMask(Mask, S);
-    StringsW2J(S, Result)
-  finally
-    S.Free
-  end
-end;
-
-procedure FindAll(BasePath, Mask: WideString; Result: TStrings);
-var
-  S: TStringListW;
-begin
-  S := TStringListW.Create;
-  try
-    FindAll(BasePath, Mask, S);
-    StringsW2J(S, Result)
-  finally
-    S.Free
-  end
-end;
-
-procedure FindAllRelative(BasePath, Mask: WideString; Result: TStrings);
-var
-  S: TStringListW;
-begin
-  S := TStringListW.Create;
-
-  try
-    FindAllRelative(BasePath, Mask, S);
-    StringsW2J(S, Result)
-  finally
-    S.Free
-  end
-end;
-
 function IsInvalidPathChar(const Char: WideChar): Boolean;
 begin
   Result := (Char = '\') or (Char = '/') or (Char = '*') or (Char = '?') or
@@ -853,59 +793,6 @@ begin
   Result := CreateDirectoryW(PWideChar(Path), NIL)
 end;
 
-procedure CleanDirectory(PathOrMask: WideString; MaxDirectorySize: DWord);
-var
-  SR: TWin32FindDataW;
-  Handle, BackupFolderSize, DeletedFiles: DWord;
-  FilesByAccessTime: THashOfNumbers;
-  // todo: is this limitation (65536 max files in backup\) serious? probably not, better
-  //       than using setlength in the cycle anyway.
-  Files: array[0..$FFFF] of record
-    Path: WideString;
-    Size: DWord;
-  end;
-begin
-  if PathOrMask[ Length(PathOrMask) ] = '\' then
-    PathOrMask := PathOrMask + '*.*';
-
-  Handle := FindFirstFileW(PWideChar(PathOrMask), SR);
-  if Handle <> INVALID_HANDLE_VALUE then
-  begin
-    BackupFolderSize := 0;
-    FilesByAccessTime := THashOfNumbers.Create;
-    try
-      repeat
-        if (WideString(SR.cFileName) <> '.') and (WideString(SR.cFileName) <> '..') then
-        begin
-          FilesByAccessTime.Add(SR.ftLastAccessTime.dwLowDateTime, FilesByAccessTime.Count - 1);
-          with Files[FilesByAccessTime.Count] do
-          begin
-            Path := SR.cFileName;
-            Size := SR.nFileSizeLow;
-          end;
-
-          Inc(BackupFolderSize, SR.nFileSizeLow);
-        end;
-      until not FindNextFileW(Handle, SR);
-      Windows.FindClose(Handle);
-
-      DeletedFiles := 0;
-      while BackupFolderSize > MaxDirectorySize do
-        with Files[ FilesByAccessTime.ValueByIndex(DeletedFiles) ] do
-        begin
-          DeleteFile(Path);
-          // note: we can use Delete of FilesByAccessTime but it'll be somewhat slower because
-          //       it'll be removing from the top.
-          Inc(DeletedFiles);
-
-          Dec(BackupFolderSize, Size);
-        end;
-    finally
-      FilesByAccessTime.Free;
-    end;
-  end;
-end;
-
 function ReadRegValue(Root: DWord; const Path, Key: WideString): WideString;
 var
   Handle: HKEY;
@@ -1032,92 +919,6 @@ begin
   FormFade(FadeSettings(Form, -Step));
 end;
 
-// Dialogs.pas: 2139.
-function InputQueryW(const ACaption, APrompt: WideString; var Value: WideString): Boolean;
-var
-  Form: TForm;
-  Prompt: TLabelW;
-  Edit: TEdit;
-  DialogUnits: TPoint;
-  ButtonTop, ButtonWidth, ButtonHeight: Integer;
-
-	function GetAveCharSize(Canvas: TCanvas): TPoint;
-	var
-		I: Integer;
-		Buffer: array[0..51] of Char;
-	begin
-		for I := 0 to 25 do Buffer[I] := Chr(I + Ord('A'));
-		for I := 0 to 25 do Buffer[I + 26] := Chr(I + Ord('a'));
-		GetTextExtentPoint(Canvas.Handle, Buffer, 52, TSize(Result));
-		Result.X := Result.X div 52;
-	end;
-
-begin
-  Result := False;
-  Form := TForm.Create(Application);
-  with Form do
-    try
-      Canvas.Font := Font;
-      DialogUnits := GetAveCharSize(Canvas);
-      BorderStyle := bsDialog;
-      Caption := ACaption;
-      ClientWidth := MulDiv(180, DialogUnits.X, 4);
-      Position := poScreenCenter;
-      Prompt := TLabelW.Create(Form);
-      with Prompt do
-      begin
-        Parent := Form;
-        Caption := APrompt;
-        Left := MulDiv(8, DialogUnits.X, 4);
-        Top := MulDiv(8, DialogUnits.Y, 8);
-        Constraints.MaxWidth := MulDiv(164, DialogUnits.X, 4);
-        WordWrap := True;
-      end;
-      Edit := TEdit.Create(Form);
-      with Edit do
-      begin
-        Parent := Form;
-        Font.Charset := SHIFTJIS_CHARSET;
-        Left := Prompt.Left;
-        Top := Prompt.Top + Prompt.Height + 5;
-        Width := MulDiv(164, DialogUnits.X, 4);
-        MaxLength := 255;
-        Text := Wide2JIS(Value);
-        SelectAll;
-      end;
-      ButtonTop := Edit.Top + Edit.Height + 15;
-      ButtonWidth := MulDiv(50, DialogUnits.X, 4);
-      ButtonHeight := MulDiv(14, DialogUnits.Y, 8);
-      with TButton.Create(Form) do
-      begin
-        Parent := Form;
-        Caption := InputBoxesLanguage.OK;
-        ModalResult := mrOk;
-        Default := True;
-        SetBounds(MulDiv(38, DialogUnits.X, 4), ButtonTop, ButtonWidth,
-          ButtonHeight);
-      end;
-      with TButton.Create(Form) do
-      begin
-        Parent := Form;
-        Caption := InputBoxesLanguage.Cancel;
-        ModalResult := mrCancel;
-        Cancel := True;
-        SetBounds(MulDiv(92, DialogUnits.X, 4), Edit.Top + Edit.Height + 15,
-          ButtonWidth, ButtonHeight);
-        Form.ClientHeight := Top + Height + 13;
-      end;
-      if ShowModal = mrOk then
-      begin
-        Value := JIS2Wide(Edit.Text);
-        Result := True;
-      end;
-    finally
-      Form.Free;
-    end;
-end;
-
-
 // got a hint from http://cboard.cprogramming.com/windows-programming/53507-mfc-open-directory-dialog-box.html
 function BrowseForFolderCallback(Wnd: HWND; uMsg: UINT; lParam, lpData: LPARAM): Integer; stdcall;
 begin
@@ -1176,12 +977,6 @@ initialization
       '%s'#10 +                          // exception info
       #10 +
       'Sorry.'
-  end;
-
-  with InputBoxesLanguage do
-  begin
-    OK        := 'OK';
-    Cancel    := 'Cancel';
   end;
 
 end.

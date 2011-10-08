@@ -6,7 +6,12 @@ interface
 
 uses FileStreamW, Classes, Windows, SysUtils;
 
-type
+type                                      
+  TDuplicates = Classes.TDuplicates;
+  TListAssignOp = Classes.TListAssignOp;
+  TListSortCompare = Classes.TListSortCompare;
+  TListNotification = Classes.TListNotification;
+
   TStringsW = class (TPersistent)
   protected
     FDefined: TStringsDefined;
