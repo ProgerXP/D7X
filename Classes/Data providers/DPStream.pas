@@ -11,10 +11,9 @@ uses DataProvider, Windows, Classes;
 
 type
   TDPStream = class (TDataProvider)
-  private
-    FFreeStream: Boolean;
   protected
     FStream: TStream;
+    FFreeStream: Boolean;
 
     function GetID: WideString; override;
 
@@ -75,11 +74,13 @@ end;
 function TDPStream.DoRead;
 begin
   Result := FStream.Read(Dest^, Size);
+  FStream.Seek(-1 * Result, soFromCurrent);
 end;
 
 function TDPStream.DoWrite;
 begin
-  Result := FStream.Write(Source^, Size);
+  Result := FStream.Write(Source^, Size);  
+  FStream.Seek(-1 * Result, soFromCurrent);
 end;
 
 function TDPStream.GetID: WideString;

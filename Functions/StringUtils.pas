@@ -38,20 +38,22 @@ type
   TCallOnEachLineOptions_OO = record
     Callback: TCallOnEachLineInCallback_OO;
     UserData: DWord;
-    EOLN: WIdeChar;
+    EOLN: WideString;
   end;
 
 // todo: make Lower/UpperCase wrapper for Wide*Case.
 // todo: reconvertion table for Lower/UpperCase?
 // todo: use StringTypeW in RemoveNonWordChars?
 
+// unlike TryStrToInt this considers strings with leading/trailing spaces as invalid.
+function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;
+function DetectEolnStyleIn(Str: WideString): WideString;
+
 // not more than 65536 resulting pieces are supported.
 function Explode(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
-// Split is like Explode with Count = 2. It's faster and more convenient because it doesn't return an array.
-// If there was no Splitter then First will be '' and Second will be the while Str.
-// Warning: do not pass the same string as Str and First/Second args, it'll get emptied!
-procedure Split(Str: WideString; Splitter: WideString; out First, Second: WideString;
-  const IgnoreEscapes: Boolean = False);
+// removes EscapeChars from First; returns False, sets First to Str and Second to '' if Str contained no Splitter.
+function Split(Str: WideString; Splitter: WideString; var First, Second: WideString;
+  const Escaper: WideString = ''): Boolean;
 function CharsOfString(const Str: WideString): TWideStringArray;
 function Join(WSArray: array of WideString; Glue: WideString = ', '): WideString;
 
@@ -73,6 +75,12 @@ function StrScanW(Str: PWideChar; Chr: WideChar): PWideChar;
   // will raise EConvertError if QuoteChar was not found in Str (i.e. if EndPos was set to -1).
   function Unquote(const Str, QuoteChar: WideString; StartAt: Integer = 1): WideString; overload;
 
+  function PascalQuote(const Str: WideString): WideString;
+  // sets Pos to -1 if string ended properly on an apostrophe ('), otherwise Pos is set
+  // after the closing apostrophe if it was found earlier or past the end of Str if there was none.
+  function PascalUnquote(const Str: WideString; var Pos: Integer): WideString; overload;
+  function PascalUnquote(Str: WideString; MustStartWithQuote: Boolean = True): WideString; overload;
+
 function IsDelimiter(const Delimiters, S: WideString; Index: Integer): Boolean;
 // only European languages (no Japanese and such). Space is considered a word character.
 function RemoveNonWordChars(const Str: WideString; DoNotRemove: WideString = ''): WideString;
@@ -84,8 +92,10 @@ function WrapText(const Str: WideString; const Delimiter: WideString; const MaxW
 function PadText(const Str: WideString; const NewLine, PadStr: WideString; const MaxWidth: Word): WideString;
 function PadTextWithVariableLineLength(const Str: WideString; const NewLine, PadStr: WideString;
   const LineLengths: array of Integer): WideString;
-
-function StrRepeat(const Str: WideString; Times: DWord): WideString;
+                       
+function StrPad(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
+function StrPadLeft(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
+function StrRepeat(const Str: WideString; Times: Integer): WideString;
 // it's like PHP's strtr() - replacing chars from CharChars with those in ToChars or
 // removes them if ToChars is shorter than FromChars.
 function StrReplace(const Str: WideString; FromChars, ToChars: WideString): WideString; overload;
@@ -167,6 +177,34 @@ const
   StdCharsToEscape:  WideString   = '\'#13#10#9;     // don't forget to escape the EscapeChar itself.
   StdEscapedChars:   WideString   = '\rnt';
 
+function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;
+begin
+  if (S <> '') and (S[1] > ' ') and (S[Length(S)] > ' ') then
+    Result := TryStrToInt(S, Value)
+    else
+      Result := False;
+end;
+                   
+function DetectEolnStyleIn(Str: WideString): WideString;
+const
+  CR = #13;
+  LF = #10;
+var
+  LfPos: Integer;
+begin
+  LfPos := PosW(LF, Str, 2);
+
+  if LfPos = 0 then
+    if PosW(CR, Str, 2) = 0 then
+      Result := LF
+      else
+        Result := CR
+    else if Str[LfPos - 1] = CR then
+      Result := CR + LF
+      else
+        Result := LF;
+end;
+
 function Explode(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
 var
   Current, P: Integer;
@@ -209,22 +247,35 @@ begin
   SetLength(Result, Current);
 end;
 
-procedure Split(Str: WideString; Splitter: WideString; out First, Second: WideString;
-  const IgnoreEscapes: Boolean = False);
+function Split(Str: WideString; Splitter: WideString; var First, Second: WideString;
+  const Escaper: WideString = ''): Boolean;
 var
   Pos: Integer;
 begin
   Pos := 0;
-  repeat
+  while True do
+  begin
     Pos := PosW(Splitter, Str, Pos + 1);
-  until IgnoreEscapes or (Pos <= 1) or (Str[Pos - 1] <> EscapeChar);
+    if (Pos = 0) or (Escaper = '') or (Copy(Str, Pos - Length(Escaper), Length(Escaper)) <> Escaper) then
+      Break
+      else
+      begin
+        Delete(Str, Pos - Length(Escaper), Length(Escaper));
+        Dec(Pos, Length(Escaper));
+      end;
+  end;
 
-  if Pos = 0 then
-    Splitter := ''
+  Result := Pos > 0;
+  if Result then
+  begin
+    First := Copy(Str, 1, Pos - 1);
+    Second := Copy(Str, Length(First) + Length(Splitter) + 1, Length(Str));
+  end
     else
-      First := Copy(Str, 1, Pos - 1);
-
-  Second := Copy(Str, Length(First) + Length(Splitter) + 1, $FFFF);
+    begin
+      First := Str;
+      Second := '';
+    end;
 end;
 
 function CharsOfString(const Str: WideString): TWideStringArray;
@@ -410,6 +461,108 @@ end;
     Result := Unquote(Str, QuoteChar, EndPos, StartAt);
     if EndPos < 2 then
       raise EConvertError.CreateFmt('Cannot Unquote(%s) - no ending %s found.', [Copy(Str, StartAt, 100), QuoteChar]);
+  end;
+
+  function PascalQuote(const Str: WideString): WideString;                                   
+  var
+    I: Integer;
+    Opened: Boolean;
+  begin
+    Result := '';
+    Opened := False;
+
+    for I := 1 to Length(Str) do
+      if Ord(Str[I]) < Ord(' ') then
+      begin
+        if Opened then Result := Result + '''';
+        Opened := False;
+
+        Result := Result + '#' + IntToStr(Ord(Str[I]));
+      end
+        else
+        begin
+          if not Opened then Result := Result + '''';
+          Opened := True;
+
+          if Str[I] = '''' then
+            Result := Result + ''''''''
+            else
+              Result := Result + Str[I];
+        end;
+
+    if Opened then Result := Result + '''';
+  end;
+
+  function PascalUnquote(const Str: WideString; var Pos: Integer): WideString;
+
+    function EscapedChar(out Output: WideChar): Boolean;
+    var
+      I, Code: Integer;
+    begin
+      for I := Pos + 8 downto Pos + 1 do
+        if TryStrToIntStrict(Copy(Str, Pos + 1, I - Pos - 1), Code) then
+        begin
+          Pos := I + 2;
+          Result := True;
+          Output := WideChar(Code);
+          Exit;
+        end;
+
+      Result := False;
+    end;
+
+  var
+    Opened: Boolean;
+    CharByCode: WideChar;
+  begin
+    Opened := False;
+
+    while Pos <= Length(Str) do
+    begin
+      if Str[Pos] = '''' then
+      begin
+        if Opened and (Pos + 1 <= Length(Str)) and (Str[Pos + 1] = '''') then
+        begin
+          Result := Result + '''';
+          Inc(Pos);
+        end;
+        Opened := not Opened;
+      end
+        else if Opened then
+          Result := Result + Str[Pos]
+          else if (Str[Pos] <> '#') then
+            Exit
+            else if EscapedChar(CharByCode) then
+              Result := Result + CharByCode
+              else
+                Exit;
+
+      Inc(Pos);
+    end;
+
+    if not Opened then
+      Pos := -1;
+  end;
+
+  function PascalUnquote(Str: WideString; MustStartWithQuote: Boolean = True): WideString;
+  var
+    Pos: Integer;
+  begin
+    if Str = '' then
+      Result := ''
+      else
+      begin
+        Pos := 1;
+        Result := PascalUnquote(Str, Pos);
+
+        if Pos <> -1 then
+          if Pos < Length(Str) then
+            raise EConvertError.CreateFmt('There is still data after closing apostrophe ('') of' +
+                                          ' the Pascal-quoted string "%s".', [Str])
+          else
+            raise EConvertError.CreateFmt('Pascal-quoted string "%s" must end with' +
+                                          ' an apostrophe ('').', [Str]);
+      end;                               
   end;
 
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
@@ -667,7 +820,17 @@ begin
   Result := GenericPadText(Str, NewLine, PadStr, LineLengths);
 end;
 
-function StrRepeat(const Str: WideString; Times: DWord): WideString;
+function StrPad(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
+begin
+  Result := Str + StrRepeat(PadChar, ToLength - Length(Str));
+end;
+
+function StrPadLeft(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
+begin
+  Result := StrRepeat(PadChar, ToLength - Length(Str)) + Str;
+end;
+
+function StrRepeat(const Str: WideString; Times: Integer): WideString;
 begin
   Result := '';
   if Str <> '' then
@@ -905,7 +1068,7 @@ end;
 
 function CompareStr(const S1, S2: WideString; Flags: DWord = 0): Integer;
 begin
-  Result := CompareStringW(LOCALE_USER_DEFAULT, 0, PWideChar(S1), Length(S1), PWideChar(S2), Length(S2)) - 2
+  Result := CompareStringW(LOCALE_USER_DEFAULT, Flags, PWideChar(S1), Length(S1), PWideChar(S2), Length(S2)) - 2
 end;
 
 function CompareText(const S1, S2: WideString): Integer;
@@ -948,22 +1111,24 @@ end;
 
 function CallOnEachLineIn(Str: WideString; Options: TCallOnEachLineOptions_OO): DWord;
 var
-  I, PrevNewLine: DWord;
+  I, PrevNewLine: Integer;
+  EOLN: WideString;
 begin
   Result := 0;
   PrevNewLine := 1;
+  EOLN := Options.EOLN;
 
-  if (Str <> '') and (Str[Length(Str)] <> Options.EOLN) then
-    Str := Str + Options.EOLN;
+  if (Str <> '') and (Copy(Str, Length(Str) + Length(EOLN), Length(EOLN)) <> EOLN) then
+    Str := Str + EOLN;
 
   for I := 1 to Length(Str) do
-    if Str[I] = Options.EOLN then
+    if Copy(Str, I, Length(EOLN)) = EOLN then
     begin
       Inc(Result);
       if I > PrevNewLine then
-        if Options.Callback(TrimRight( Copy(Str, PrevNewLine, I - PrevNewLine), #13 ), Options.UserData) then
+        if Options.Callback(TrimRight( Copy(Str, PrevNewLine, I - PrevNewLine), #13#10 ), Options.UserData) then
           Break;
-      PrevNewLine := I + 1;
+      PrevNewLine := I + Length(EOLN);
     end;
 end;
 

@@ -10,6 +10,10 @@ type
   protected
     FFileName: WideString;
   public
+    // this method handles UTF-8/Unicode/Unicode-BE files with signatures treating others
+    // as using native ANSI charset. 
+    class function LoadUnicodeFrom(const FileName: WideString): WideString;
+
     constructor Create(const FileName: WideString; Mode: Word); overload;
 
     // it will always create a new file but with the specified access (not like
@@ -31,6 +35,11 @@ const
   fmShareDenyNone  = SysUtils.fmShareDenyNone;
 
 implementation
+                     
+const
+  UTF8Signature: array[0..2] of Char              = (#$EF, #$BB, #$BF);
+  UnicodeSignature: array[0..1] of Char           = (#$FF, #$FE);
+  BigEndianUnicodeSignature: array[0..1] of Char  = (#$FE, #$FF);
 
 // SysUtils.pas: 4788
 function FileCreateW(const FileName: WideString; Mode: LongWord; CreationMode: LongWord = CREATE_ALWAYS): Integer;
@@ -48,6 +57,65 @@ const
 begin
   Result := Integer(CreateFileW(PWideChar(FileName), AccessMode[Mode and 3],
                     ShareMode[(Mode and $F0) shr 4], NIL, CreationMode, FILE_ATTRIBUTE_NORMAL, 0))
+end;
+
+{ TFileStreamW }
+
+class function TFileStreamW.LoadUnicodeFrom(const FileName: WideString): WideString;
+type
+  TEncoding = (ANSI, UTF8, Unicode, UnicodeBE);
+var
+  Stream: TFileStreamW;
+  Sign: array[0..2] of Char;
+  Encoding: TEncoding;
+  Data: String;
+  I: Integer;
+  Temp: Char;
+begin
+  Stream := Self.Create(FileName, fmOpenRead or fmShareDenyWrite);
+  try
+    Stream.Read(Sign[0], 3);
+
+    if Sign = UTF8Signature then
+      Encoding := UTF8
+      else if Copy(Sign, 1, 2) = UnicodeSignature then
+        Encoding := Unicode
+        else if Copy(Sign, 1, 2) = BigEndianUnicodeSignature then
+          Encoding := UnicodeBE
+          else
+            Encoding := ANSI;
+
+    case Encoding of
+    Unicode, UnicodeBE: Stream.Position := 2;
+    ANSI:               Stream.Position := 0;
+    end;
+
+    SetLength(Data, Stream.Size - Stream.Position);
+    Stream.ReadBuffer(Data[1], Length(Data));
+
+    case Encoding of              
+    ANSI:
+      Result := Data;   // Delphi will convert strings automatically.
+    UTF8:
+      Result := UTF8Decode(Data);
+    Unicode, UnicodeBE:
+      begin                                        
+        if Encoding = UnicodeBE then
+          for I := 1 to Length(Data) do
+            if I mod 2 = 0 then
+            begin
+              Temp := Data[I - 1];
+              Data[I - 1] := Data[I];
+              Data[I] := Temp;
+            end;
+
+        SetLength(Result, Length(Data) div 2);
+        Move(Data[1], Result[1], Length(Data));
+      end;
+    end;
+  finally
+    Stream.Free;
+  end;
 end;
 
 function FileOpenW(const FileName: WideString; Mode: LongWord): Integer;

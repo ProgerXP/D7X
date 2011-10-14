@@ -339,8 +339,10 @@ begin
   if E = NIL then
     E := Exception.Create('No exception.');
 
+  Result := WrapText(E.Message, #10'    ', 75);
+
   Result := WideFormat(UtilsLanguage.ExceptionInfo,
-    [E.ClassName, DWord(ExceptAddr), E.Message, WinError, SysErrorMessage(WinError)]);
+    [E.ClassName, DWord(ExceptAddr), Result, WinError, SysErrorMessage(WinError)]);
 end;
 
 procedure ShowException(Message: WideString);
@@ -966,7 +968,9 @@ initialization
     ExceptionInfo :=
       'Exception details:'#10 +
       '%s @ %.8x:'#10 +                  // exception class name, address
+        #10 +
       '    %s'#10 +                      // exception message
+        #10 +
       'GetLastError = %d'#10 +           // code
       '    (%s)';                        // formatted message
 

@@ -19,6 +19,9 @@ type
     FQuoteChar: WideChar;
     FNameValueSeparator: WideChar;
     FUpdateCount: Integer;
+    
+    FLineBreak: WideString;
+
     function GetCommaText: WideString;
     function GetDelimitedText: WideString;
     function GetName(Index: Integer): WideString;
@@ -103,6 +106,8 @@ type
     property Strings[Index: Integer]: WideString read Get write Put; default;
     property Text: WideString read GetTextStr write SetFromText;
 
+    // affects Text(), defaults to LF (Linux) or CRLF (Windows):
+    property LineBreak: WideString read FLineBreak write FLineBreak;
     procedure AppendTo(const Other: TStrings); overload;
     procedure AppendTo(const Other: TStringsW); overload;
     procedure CopyTo(const Other: TStrings); overload;
@@ -125,7 +130,7 @@ type
 
   PStringItemListW = ^TStringItemListW;
   TStringItemListW = array[0..MaxListSize] of TStringItemW;
-  TStringListSortCompare = function(List: TStringListW; Index1, Index2: Integer): Integer;
+  TStringListSortCompare = function(List: TStringListW; Index1, Index2: Integer): Integer of object;
 
   TStringListW = class (TStringsW)
   protected
@@ -137,10 +142,11 @@ type
     FCaseSensitive: Boolean;
     FOnChange: TNotifyEvent;
     FOnChanging: TNotifyEvent;
-    
+
     procedure ExchangeItems(Index1, Index2: Integer);
     procedure Grow;
     procedure QuickSort(L, R: Integer; SCompare: TStringListSortCompare);
+    function Sorter(List: TStringListW; Index1, Index2: Integer): Integer;
     procedure SetSorted(Value: Boolean);
     procedure SetCaseSensitive(const Value: Boolean);
     procedure Changed; virtual;
@@ -266,6 +272,7 @@ const
              
 constructor TStringsW.Create;
 begin
+  FLineBreak := sLineBreak;
 end;
 
 function TStringsW.Add(const S: WideString; Tag: DWord = 0): Integer;
@@ -502,7 +509,7 @@ var
 begin
   Count := GetCount;
   Size := 0;
-  LB := sLineBreak;
+  LB := FLineBreak;
   for I := 0 to Count - 1 do Inc(Size, Length(Get(I)) + Length(LB));
   SetLength(Result, Size);
   P := Pointer(Result);
@@ -1237,7 +1244,7 @@ begin
   if Updating then Changing else Changed;
 end;
 
-function StringListCompareStrings(List: TStringListW; Index1, Index2: Integer): Integer;
+function TStringListW.Sorter(List: TStringListW; Index1, Index2: Integer): Integer;
 begin
   Result := List.CompareStrings(List.FList^[Index1].FString,
                                 List.FList^[Index2].FString);
@@ -1245,7 +1252,7 @@ end;
 
 procedure TStringListW.Sort;
 begin
-  CustomSort(StringListCompareStrings);
+  CustomSort(Sorter);
 end;
 
 procedure TStringListW.CustomSort(Compare: TStringListSortCompare);

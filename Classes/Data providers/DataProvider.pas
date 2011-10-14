@@ -39,7 +39,8 @@ type
   protected
     FReadOnly: Boolean;
     FLongestStrToRead: DWord;
-    FErrorOnBufferEnd: Boolean;
+    FErrorOnBufferEnd: Boolean;          
+    FEOLN: WideString;
     FSavedPositions: TStack;
 
     function GetID: WideString; virtual;
@@ -66,6 +67,7 @@ type
     // in chars, not bytes:
     property LongestStrToRead: DWord read FLongestStrToRead write FLongestStrToRead default 1000;
     property ErrorOnBufferEnd: Boolean read FErrorOnBufferEnd write FErrorOnBufferEnd default True;
+    property EOLN: WideString read FEOLN write FEOLN;  // defaults to LF
 
     function IsOpened: Boolean; virtual;
     // not necessary unique but a string identifying the provider (such as a file name).
@@ -88,8 +90,12 @@ type
     { note: buffer (Dest and Source) is already allocated. It is freed by the called so no need to FreeMem it here. }
     function Read(Dest: Pointer; Size: DWord): DWord; virtual;
     function ReadFrom(Position: DWord; Dest: Pointer; Size: DWord): DWord;
+    function ReadAsString(Length: Integer): String;
+    function ReadAsStringFrom(Position: DWord; Length: Integer): String;
     function Write(Source: Pointer; Size: DWord): DWord; virtual;
     function WriteAt(Position: DWord; Source: Pointer; Size: DWord): DWord;
+    function WriteFromString(const Str: String): DWord;
+    function WriteFromStringAt(Position: DWord; const Str: String): DWord;
 
     { Utility fnctions. }
     function SavePosition: DWord;        // saves and returns the current position (= Tell).
@@ -144,7 +150,7 @@ uses DPFile, DPStream, Math;
 
 constructor EDPReadOnly.Create(DPClass: String);
 begin
-  CreateFmt('Cannot write to the read-only %s data provider.', [DPClass]);
+  CreateFmt('Cannot write to read-only %s data provider.', [DPClass]);
 end;                
 
 constructor EDPNotOpened.Create(DPClass, Operation: String);
@@ -154,7 +160,7 @@ end;
 
 constructor EDPBufferEnd.Create(DPClass, Operation: String; Expected, Actual: DWord);
 begin
-  CreateFmt('%s data provider expected to %s %d bytes but only %d were.', [DPCLass, Operation, Expected, Actual]);
+  CreateFmt('%s data provider could only %s %d out of %d bytes.', [DPCLass, Operation, Actual, Expected]);
 end;
 
 constructor EDPTooLongStringToRead.Create(DPClass, StrType: String; MaxLength: DWord);
@@ -170,6 +176,7 @@ begin
   FReadOnly := False;
   FLongestStrToRead := 1000;
   FErrorOnBufferEnd := True;
+  FEOLN := #10;  // LF 
 end;
 
 destructor TDataProvider.Destroy;
@@ -211,23 +218,39 @@ end;
 
 function TDataProvider.Read;
 begin
-  Size := Min(BytesLeft, Size);
-  if Size = 0 then
-    Result := 0
-    else if not IsOpened then
-      raise EDPNotOpened.Create(ClassName, 'read')
+  if not IsOpened then
+    raise EDPNotOpened.Create(ClassName, 'read')
+    else if Size > 0 then
+    begin
+      Result := DoRead(Dest, Min(BytesLeft, Size));
+      AdvanceBy(Result);
+      CheckAmount('read', Size, Result);
+    end
       else
-      begin
-        Result := DoRead(Dest, Size);
-        AdvanceBy(Result);           
-        CheckAmount('read', Size, Result);
-      end;
+        Result := 0;
 end;
 
 function TDataProvider.ReadFrom;
 begin
   Seek(Position);
   Result := Read(Dest, Size);
+end;
+
+function TDataProvider.ReadAsString(Length: Integer): String;
+begin
+  if Length > 0 then
+  begin
+    SetLength(Result, Length);
+    SetLength(Result, Read(@Result[1], Length));
+  end
+    else
+      Result := '';
+end;
+
+function TDataProvider.ReadAsStringFrom(Position: DWord; Length: Integer): String;
+begin
+  Seek(Position);
+  Result := ReadAsString(Length);
 end;
 
 function TDataProvider.WriteAt;
@@ -238,19 +261,31 @@ end;
 
 function TDataProvider.Write;
 begin
-  if not IsReadOnly then
-  begin
-    if Self.Size < Tell + Size then
-      Self.Size := Tell + Size;
-
-    Result := DoWrite(Source, Size);
-    AdvanceBy(Result);
-    CheckAmount('write', Size, Result);
-  end
-    else if not IsOpened then
-      raise EDPNotOpened.Create(ClassName, 'write')
+  if IsReadOnly or not IsOpened then
+    if IsReadOnly then
+      raise EDPReadOnly.Create(ClassName)
       else
-        raise EDPReadOnly.Create(ClassName);
+        raise EDPNotOpened.Create(ClassName, 'write')
+    else if Size > 0 then
+    begin
+      Result := DoWrite(Source, Size);
+      Self.Size := Min(Self.Size, Tell + Result);
+      AdvanceBy(Result);
+      CheckAmount('write', Size, Result);
+    end
+      else
+        Result := 0;
+end;                           
+
+function TDataProvider.WriteFromString(const Str: String): DWord;
+begin
+  Result := Write(@Str[1], Length(Str));
+end;
+
+function TDataProvider.WriteFromStringAt(Position: DWord; const Str: String): DWord;
+begin
+  Seek(Position);
+  Result := WriteFromString(Str);
 end;
 
 function TDataProvider.CompareAt(Position: DWord; Buf: String): Boolean;
@@ -259,14 +294,14 @@ begin
   Result := CompareWith(Buf);
 end;
 
-function TDataProvider.CompareWith;
+function TDataProvider.CompareWith(Buf: AnsiString): Boolean;
 var
   Current: String;
 begin
   SavePosition;
   SetLength(Current, Length(Buf));
-  Read(@Current[1], Length(Buf));
-  Result := Current = Buf;
+  Read(@Current[1], Min(BytesLeft, Length(Buf)));
+  Result := (Length(Current) = Length(Buf)) and (Current = Buf);
   if Result then
     DropPosition
     else
