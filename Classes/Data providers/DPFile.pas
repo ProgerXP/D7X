@@ -9,7 +9,8 @@ type
   protected
     FFileName: WideString;
 
-    function GetID: WideString; override;
+    function GetID: WideString; override;  
+    property FreeStream;
   public
     constructor Create(const FileName: WideString; ReadOnly: Boolean = False); reintroduce;
     constructor CreateNew(const FileName: WideString);
