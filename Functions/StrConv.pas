@@ -77,14 +77,13 @@ function IdToCharset(ID: DWord; GetDescription: Boolean = False): String;
 var
   Key: HKEY;
   ValueType, BufSize: DWord;
-  Alias: array[0..4095] of Char;
   Field: PChar;
 begin
   Result := '';
 
   if RegOpenKeyEx(HKEY_CLASSES_ROOT, PChar('MIME\Database\Codepage\' + IntToStr(ID)), 0, KEY_QUERY_VALUE, Key) = ERROR_SUCCESS then
     try
-      SetLength(Result, 255);
+      SetLength(Result, 4096);
       BufSize := SizeOf(Result);
 
       if GetDescription then

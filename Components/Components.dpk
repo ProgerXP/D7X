@@ -30,6 +30,9 @@ requires
   vcl;
 
 contains
-  UnicodeDialogs in 'UnicodeDialogs.pas';
+  UnicodeDialogs in 'UnicodeDialogs.pas',
+  PNGSpeedButton in 'PNGSpeedButton.pas',
+  MenuSpeedButton in 'MenuSpeedButton.pas',
+  pngimage in '..\PNGImage\pngimage.pas';
 
 end.

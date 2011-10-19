@@ -216,8 +216,6 @@ begin
   while True do
   begin
     Inc(Current);
-    if current = 10000 then
-    current := current + 1 - 1;
     if Current = $FFFF then
       raise EOutOfMemory.Create('Explode does not support more than 65536 pieces.');
 
@@ -502,7 +500,7 @@ end;
       for I := Pos + 8 downto Pos + 1 do
         if TryStrToIntStrict(Copy(Str, Pos + 1, I - Pos - 1), Code) then
         begin
-          Pos := I + 2;
+          Pos := I - 1;
           Result := True;
           Output := WideChar(Code);
           Exit;
