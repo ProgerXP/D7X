@@ -101,6 +101,7 @@ function StrRepeat(const Str: WideString; Times: Integer): WideString;
 function StrReplace(const Str: WideString; FromChars, ToChars: WideString): WideString; overload;
 function StrReplace(const S, OldPattern, NewPattern: WideString;
   Flags: TReplaceFlags): WideString; overload;
+function CountSubstr(const Substr, Str: WideString): Integer;
 
 function EscapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
 function UnescapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
@@ -886,6 +887,22 @@ begin
       Break;
     end;
     SearchStr := Copy(SearchStr, Offset + Length(Patt), MaxInt);
+  end;
+end;
+
+function CountSubstr(const Substr, Str: WideString): Integer;
+var
+  Pos: Integer;
+begin
+  Result := 0;
+  Pos := 0;
+  while True do
+  begin
+    Pos := PosW(Substr, Str, Pos) + 1;
+    if Pos = 1 then
+      Break
+      else
+        Inc(Result);
   end;
 end;
 

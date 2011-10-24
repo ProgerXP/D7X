@@ -2,20 +2,35 @@ unit Threads;
 
 interface
 
-uses Windows, Forms;    
+uses Windows, SysUtils, Forms;
 
 type
-  TProcArguments = array of Pointer;
+  TProcArguments = array of record
+    VType: Byte;
+    Str: WideString;
+
+    case Byte of
+    0: (Ptr: Pointer);
+    1: (Int: Integer);
+    2: (Num: DWord);
+  end;
+  
+  TSingleThread = class;
 
   { Callback procedure return value depend on the Caller type:
     * TSingleThread - it's thread's exit code,
     * TMMTimer - return anything greater than 0 to stop the timer. }
   TCallbackProc = function (Caller: TObject; const Arguments: TProcArguments): DWord;
   TObjectCallbackProc = function (Caller: TObject; const Arguments: TProcArguments): DWord of object;
+  TOnExceptionCallback = function (Caller: TObject; const Arguments: TProcArguments; E: Exception): DWord of object;
+  TThreadOnFinishCallback = procedure (Thread: TSingleThread) of object;
 
   TProcSettings = record
     Caller: TObject;
     Args: TProcArguments;
+
+    OnFinish: TThreadOnFinishCallback;
+    OnException: TOnExceptionCallback;
 
     case IsObjectProc: Boolean of
     True:  (ObjectProc: TObjectCallbackProc);
@@ -28,6 +43,11 @@ type
     FHandle: DWord;
     FThreadID: DWord;
     FTimeOut: DWord;
+    
+    function GetOnFinish: TThreadOnFinishCallback;
+    procedure SetOnFinish(const Value: TThreadOnFinishCallback);
+    function GetOnException: TOnExceptionCallback;
+    procedure SetOnException(const Value: TOnExceptionCallback);
   public
     constructor Create; overload;
     constructor Create(Proc: TCallbackProc; const Arguments: TProcArguments = NIL;
@@ -41,6 +61,9 @@ type
     function HasFinished: Boolean;
     function ExitCode: DWord;
     function HasTimedOut: Boolean;
+
+    property OnFinish: TThreadOnFinishCallback read GetOnFinish write SetOnFinish;
+    property OnException: TOnExceptionCallback read GetOnException write SetOnException;
 
     procedure Run;
     procedure SetArguments(const Arguments: TProcArguments);
@@ -57,6 +80,8 @@ type
     FDelay: DWord;
 
     procedure SetDelay(const Value: DWord);
+    function GetOnException: TOnExceptionCallback;
+    procedure SetOnException(const Value: TOnExceptionCallback);
   public
     constructor Create; overload;
     constructor Create(Proc: TCallbackProc; const Arguments: TProcArguments = NIL;
@@ -64,6 +89,8 @@ type
     constructor Create(ObjectProc: TObjectCallbackProc; const Arguments: TProcArguments = NIL;
       Delay: DWord = 0); overload;
     destructor Destroy; override;
+    
+    property OnException: TOnExceptionCallback read GetOnException write SetOnException;
 
     property Handle: DWord read FHandle;
     property Delay: DWord read FDelay write SetDelay;
@@ -78,7 +105,7 @@ function ProcArguments(const Pointers: array of const): TProcArguments;
 
 implementation
 
-uses SysUtils, MMSystem;
+uses MMSystem;
 
 const
   TimeOutExitCode = DWord(-2);
@@ -89,8 +116,18 @@ var
   I: Integer;
 begin
   SetLength(Result, Length(Pointers));
+  
   for I := 0 to Length(Pointers) - 1 do
-    Result[I] := Pointers[I].VPointer;
+    with Result[I] do
+    begin
+      VType := Pointers[I].VType;
+      if VType in [vtChar, vtString, vtPChar] then
+        Str := WideString(String(PChar(Pointers[I].VPChar)))
+        else if VType in [vtWideString, vtWideChar, vtPWideChar] then
+          Str := PWideChar(Pointers[I].VPWideChar)
+          else
+            Int := Pointers[I].VInteger;
+    end;
 end;
 
 function ProcSettings(ACaller: TObject; AProc: TCallbackProc; AnObjectProc: TObjectCallbackProc;
@@ -109,10 +146,23 @@ end;
 function ProcCaller(Settings: Pointer): DWord; stdcall;
 begin
   with TProcSettings(Settings^) do
-    if IsObjectProc then
-      Result := ObjectProc(Caller, Args)
-      else
-        Result := Proc(Caller, Args);
+    try
+      if IsObjectProc then
+        Result := ObjectProc(Caller, Args)
+        else
+          Result := Proc(Caller, Args);
+
+      if Assigned(OnFinish) then
+        OnFinish(TSingleThread(Caller));
+    except
+      on E: Exception do
+        if Assigned(OnException) then
+          Result := OnException(Caller, Args, E)
+          else
+            {Ignore - because if an exception is uncaught in a thread proc lot of strange
+             errors (Application error, Access violation, etc.) may arise.}
+            Result := 1;
+    end;
 end;
 
 { TSingleThread }            
@@ -216,6 +266,26 @@ begin
   FSettings.Args := Arguments;
 end;
 
+function TSingleThread.GetOnFinish: TThreadOnFinishCallback;
+begin
+  Result := FSettings.OnFinish;
+end;
+
+procedure TSingleThread.SetOnFinish(const Value: TThreadOnFinishCallback);
+begin
+  FSettings.OnFinish := Value;
+end;
+
+function TSingleThread.GetOnException: TOnExceptionCallback;
+begin
+  Result := FSettings.OnException;
+end;
+
+procedure TSingleThread.SetOnException(const Value: TOnExceptionCallback);
+begin
+  FSettings.OnException := Value;
+end;
+
 { TMMTimer }
 
 constructor TMMTimer.Create;
@@ -287,6 +357,16 @@ begin
     FDelay := MinTimerDelay;
   if Running then
     Restart;
+end;
+
+function TMMTimer.GetOnException: TOnExceptionCallback;
+begin
+  Result := FSettings.OnException;
+end;
+
+procedure TMMTimer.SetOnException(const Value: TOnExceptionCallback);
+begin
+  FSettings.OnException := Value;
 end;
 
 end.
