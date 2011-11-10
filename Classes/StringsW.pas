@@ -348,9 +348,9 @@ begin
       finally
         EndUpdate;
       end;
-    end;
-
-  inherited;
+    end
+    else
+      inherited;
 end;
 
 procedure TStringsW.BeginUpdate;

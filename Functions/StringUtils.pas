@@ -46,7 +46,9 @@ type
 // todo: use StringTypeW in RemoveNonWordChars?
 
 // unlike TryStrToInt this considers strings with leading/trailing spaces as invalid.
-function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;
+function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;            
+function TryStrToFloatStrict(const S: String; out Value: Single;
+  const FormatSettings: TFormatSettings): Boolean;
 function DetectEolnStyleIn(Str: WideString): WideString;
 
 // not more than 65536 resulting pieces are supported.
@@ -118,10 +120,11 @@ function PosLast(const Substr, Str: String; Start: Word = 1): Integer;
 function PosLastW(const Substr, Str: WideString; Start: Word = 1): Integer;
 function PosW(const Substr, Str: WideString; Start: Word = 1): Integer;
 
+// SysUtils has Trim, TrimLeft, TrimRight that works as Chars = ' ' so these has Chars required.
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
 function Trim(Str: WideString; const Chars: WideString): WideString; overload;
 function TrimLeft(Str: WideString; const Chars: WideString): WideString; overload;
-function TrimRight(Str: WideString; const Chars: WideString): WideString; overload;      
+function TrimRight(Str: WideString; const Chars: WideString): WideString; overload;
 function ConsistsOfChars(const Str, Chars: WideString): Boolean;
 
 function CallOnEachLineIn(Str: WideString; const Callback: TCallOnEachLineInCallback;
@@ -185,7 +188,16 @@ begin
     else
       Result := False;
 end;
-                   
+
+function TryStrToFloatStrict(const S: String; out Value: Single;
+  const FormatSettings: TFormatSettings): Boolean;
+begin
+  if (S <> '') and (S[1] > ' ') and (S[Length(S)] > ' ') then
+    Result := TryStrToFloat(S, Value, FormatSettings)
+    else
+      Result := False;
+end;
+
 function DetectEolnStyleIn(Str: WideString): WideString;
 const
   CR = #13;
