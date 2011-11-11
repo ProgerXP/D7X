@@ -7,7 +7,7 @@ unit RPNit;
 
 interface
 
-uses SysUtils, Classes, Contnrs, StringsW, StringUtils;
+uses Windows, SysUtils, Math, Classes, Contnrs, StringsW, StringUtils;
 
 type
   TRpnVarCallback = function (Name: WideString): Single of object;
@@ -15,6 +15,14 @@ type
 
   ERPN = class (Exception)
   end;
+
+    EEmptyRpnVarCharList = class (ERPN)
+      constructor Create;
+    end;
+
+    EDuplicateRpnOperator = class (ERPN)
+      constructor Create(Op: WIdeChar; OpClass: TRpnOperatorClass);
+    end;
 
     EEmptyRPN = class (ERPN)
       constructor Create;
@@ -34,7 +42,7 @@ type
     end;
 
       ENotEnoughRpnArguments = class (ERpnEvaluation)
-        constructor Create(Operator: String; NeedArgs, HasArgs: Integer); 
+        constructor Create(Operator: String; NeedArgs, HasArgs: Integer);
       end;
 
       EMissingRpnVariable = class (ERpnEvaluation)
@@ -52,6 +60,34 @@ type
       EEmptyRpnStack = class (ERpnEvaluation)
         constructor Create;
       end;
+
+  TRpnOperators = class
+  protected
+    FAnsi: array[0..High(Byte)] of TRpnOperatorClass;
+    FDefinedAnsi: Byte;
+    FHash: TObjectHash;
+
+    function GetClass(Op: WideChar): TRpnOperatorClass;
+    procedure PutClass(Op: WideChar; const Value: TRpnOperatorClass);
+  public
+    constructor Create;
+    destructor Destroy; override;
+
+    procedure Clear;
+
+    procedure AddFrom(Other: TRpnOperators);    // overwrites existing.
+    procedure Copy(Other: TRpnOperators);       // clears self.
+
+    procedure Add(Op: WideChar; OpClass: TRpnOperatorClass);
+    procedure Delete(Op: WideChar);
+    procedure DeleteAll(OpClass: TRpnOperatorClass);
+    function Exists(Op: WideChar): Boolean;
+
+    function Count: Integer;
+    property ClassBy[Op: WideChar]: TRpnOperatorClass read GetClass write PutClass; default;
+    function OpAt(Index: Integer): WideChar;
+    function ClassAt(Index: Integer): TRpnOperatorClass;
+  end;
 
   TRpnVariables = class (THash)
   protected
@@ -85,12 +121,14 @@ type
     FCompiled: TCompiledRPN;
     FStack: TFloatStack;
 
+    FOperators: TRpnOperators;
     FVariables: TRpnVariables;
     FVarCallback: TRpnVarCallback;
   public
     constructor Create(Compiled: TCompiledRPN);
     destructor Destroy; override;
-                                 
+
+    property Operators: TRpnOperators read FOperators;
     property Variables: TRpnVariables read FVariables write FVariables;
     property VarCallback: TRpnVarCallback read FVarCallback write FVarCallback;
 
@@ -135,73 +173,107 @@ type
       function Execute(Eval: TRpnEvaluator): Single; override;
     end;
 
-      TRpnAdd = class (TRpnMathOperator)
-      protected
-        function Eval(A, B: Single): Single; override;
-      end;
-
-      TRpnSubstract = class (TRpnMathOperator)
-      protected
-        function Eval(A, B: Single): Single; override;
-      end;
-
-      TRpnMultiply = class (TRpnMathOperator)
-      protected
-        function Eval(A, B: Single): Single; override;
-      end;
-
-      TRpnDivide = class (TRpnMathOperator)
-      protected
-        function Eval(A, B: Single): Single; override;
-      end;
-
-const
-  // case-insensitive:
-  RpnVarChars:    WideString = 'abcdefghijklmnopqrstuvwxyz0123456789_./\';
-
 // raises EInvalidRpnFloatStr.
 function StrToFloatRPN(Str: WideString; Expr: WideString = ''): Single;
+function RpnVarChars: WideString;
+procedure SetRpnVarChars(const Chars: WideString);
+procedure ClearRpnCache;
 
-function EvalRPN(Expr: WideString; Variables: TRpnVariables): Single; overload;
-function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback): Single; overload;
+// raises EDuplicateRpnOperator:
+procedure RegisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
+// these 2 do nothing if Op is not defined:
+procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
+procedure UnregisterDefaultRpnOperatorsOf(OpClass: TRpnOperatorClass);
+
+function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators = NIL): Single; overload;
+function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators = NIL): Single; overload;
 
 implementation
 
+type
+  TRpnAdd = class (TRpnMathOperator)
+  protected
+    function Eval(A, B: Single): Single; override;
+  end;
+
+  TRpnSubtract = class (TRpnMathOperator)
+  protected
+    function Eval(A, B: Single): Single; override;
+  end;
+
+  TRpnMultiply = class (TRpnMathOperator)
+  protected
+    function Eval(A, B: Single): Single; override;
+  end;
+
+  TRpnDivide = class (TRpnMathOperator)
+  protected
+    function Eval(A, B: Single): Single; override;
+  end;
+
+  TRpnPower = class (TRpnMathOperator)
+  protected
+    function Eval(A, B: Single): Single; override;
+  end;
+
+  TRpnModulus = class (TRpnMathOperator)
+  protected
+    function Eval(A, B: Single): Single; override;
+  end;
+
 var
-  CachedExprs: TObjectHash;   // of TCompiledRPN            
+  FRpnVarChars: WideString = 'abcdefghijklmnopqrstuvwxyz0123456789_';
+  CachedExprs: TObjectHash;   // of TCompiledRPN
+  DefaultOperators: TRpnOperators;
 
 { Exceptions }
+
+constructor EEmptyRpnVarCharList.Create;
+begin
+  inherited Create('Attempted to set empty RpnVarChars.');
+end;
+
+constructor EDuplicateRpnOperator.Create(Op: WIdeChar; OpClass: TRpnOperatorClass);
+begin
+  CreateFmt('Attempted to add a new operator "%s" of class %s to the RPN operator list' +
+            ' but it was already taken.', [Op, OpClass]);
+end;
 
 constructor EEmptyRPN.Create;
 begin
   inherited Create('Empty RPN expression string.');
-end;                     
+end;
 
 constructor EWrongRpnSyntax.Create(Expr: WideString; Pos: Integer);
+const
+  PreviewLength = 20;
 begin
   if Pos > 0 then
     CreateFmt('Invalid RPN expression syntax at "%s" (position %d, full string: "%s").',
-                        [Copy(Expr, Pos, Length(Expr)), Pos, Expr])
+                        [Copy(Expr, Pos, PreviewLength), Pos, Expr])
     else
       CreateFmt('Invalid RPN expression string "%s".', [Expr]);
 end;
-                                 
+
 constructor EInvalidRpnFloatStr.Create(Num: WideString; Expr: WideString = '');
 begin
   Self.Num := Num;
   Self.Expr := Expr;
-  
+
   if Expr = '' then
     CreateFmt('Invalid floating point constant "%s" in an RPN expression.', [Num])
     else
       CreateFmt('Invalid floating point constant "%s" in RPN expression "%s".', [Num, Expr]);
 end;
-                           
+
 constructor ENotEnoughRpnArguments.Create(Operator: String; NeedArgs, HasArgs: Integer);
 begin
-  CreateFmt('Too few arguments on stack for %s operator (need %d, has %d).', [Operator, NeedArgs, HasArgs]);
+  if Copy(Operator, 0, 4) = 'TRpn' then
+    Operator := Copy(Operator, 5, Length(Operator));
+
+  CreateFmt('Too few arguments on stack for %s (needs %d, has %d).', [Operator, NeedArgs, HasArgs]);
 end;
-                               
+
 constructor EMissingRpnVariable.Create(Name: WideString);
 begin
   CreateFmt('Missing RPN expression variable "%s".', [Name]);
@@ -211,7 +283,7 @@ constructor EVariablelessRPN.Create(Name: WideString);
 begin
   CreateFmt('Variable "%s" was found in an RPN expression but no variables were' +
             ' bound to the expression prior to its evaluation.', [Name]);
-end;                      
+end;
 
 constructor ENonEmptyRpnStack.Create(StackItemsLeft: Integer);
 begin
@@ -222,6 +294,174 @@ constructor EEmptyRpnStack.Create;
 begin
   inherited Create('There were no items left on stack after evaluating an RPN expression' +
                    ' - but at least one is required to determine the expression result.');
+end;
+
+{ TRpnOperators }
+
+constructor TRpnOperators.Create;
+begin
+  FHash := TObjectHash.Create(False);
+  FHash.CaseSensitive := False;
+  FHash.Duplicates := dupError;
+  FHash.Sorted := True;
+
+  Clear;
+end;
+
+destructor TRpnOperators.Destroy;
+begin
+  FHash.Free;
+  inherited;
+end;
+
+procedure TRpnOperators.Clear;
+begin
+  ZeroMemory(@FAnsi[0], SizeOf(FAnsi));
+  FDefinedAnsi := 0;
+
+  FHash.Clear;
+end;
+
+procedure TRpnOperators.AddFrom(Other: TRpnOperators);
+var
+  I, Index: Integer;
+begin
+  for I := 0 to Length(FAnsi) - 1 do
+    if Assigned( Other.FAnsi[I] ) then
+    begin
+      if not Assigned(FAnsi[I]) then
+        Inc(FDefinedAnsi);
+      FAnsi[I] := Other.FAnsi[I];
+    end;
+
+  for I := 0 to Other.FHash.Count - 1 do
+  begin
+    Index := FHash.IndexOf(Other.FHash.Strings[I]);
+    if Index = -1 then
+      FHash.AddObject(Other.FHash.Strings[I], Other.FHash.Objects[I])
+      else
+        FHash.Objects[Index] := Other.FHash.Objects[I];
+  end;
+end;
+
+procedure TRpnOperators.Copy(Other: TRpnOperators);
+begin
+  Move(Other.FAnsi[0], FAnsi[0], SizeOf(FAnsi));
+  FDefinedAnsi := Other.FDefinedAnsi;
+
+  FHash.Assign(Other.FHash);
+end;
+
+procedure TRpnOperators.Add(Op: WIdeChar; OpClass: TRpnOperatorClass);
+begin
+  if Exists(Op) then
+    raise EDuplicateRpnOperator.Create(Op, OpClass)
+    else
+      ClassBy[Op] := OpClass;
+end;
+
+procedure TRpnOperators.Delete(Op: WIdeChar);
+begin
+  if Word(Op) < High(Byte) then
+  begin
+    FAnsi[Word(Op)] := NIL;
+    Dec(FDefinedAnsi);
+  end
+    else
+      FHash.Delete(Op);
+end;
+
+procedure TRpnOperators.DeleteAll(OpClass: TRpnOperatorClass);
+var
+  I: Integer;
+begin
+  for I := 0 to Length(FAnsi) - 1 do
+    if FAnsi[I] = OpClass then
+    begin
+      FAnsi[I] := NIL;
+      Dec(FDefinedAnsi);
+    end;
+
+  while True do
+  begin
+    I := FHash.IndexOfObject(TObject(OpClass));
+    if I = -1 then
+      Break;
+    FHash.Delete(I);
+  end;
+end;
+
+function TRpnOperators.Exists(Op: WideChar): Boolean;
+begin
+  if Word(Op) < High(Byte) then
+    Result := Assigned(FAnsi[Word(Op)])
+    else
+      Result := FHash.IndexOf(Op) <> -1;
+end;
+
+function TRpnOperators.Count: Integer;
+begin
+  Result := FDefinedAnsi + FHash.Count;
+end;
+
+function TRpnOperators.GetClass(Op: WideChar): TRpnOperatorClass;
+begin
+  if Word(Op) < High(Byte) then
+    Result := FAnsi[Word(Op)]
+    else
+      Result := TRpnOperatorClass(FHash[Op]);
+end;
+
+procedure TRpnOperators.PutClass(Op: WideChar; const Value: TRpnOperatorClass);
+begin
+  if Word(Op) < High(Byte) then
+  begin
+    if not Assigned( FAnsi[Word(Op)] ) then
+      Inc(FDefinedAnsi);
+    FAnsi[Word(Op)] := Value;
+  end
+    else
+      FHash[Op] := TObject(Value);
+end;
+
+function TRpnOperators.OpAt(Index: Integer): WideChar;
+var
+  I: Byte;
+begin
+  Result := '_';
+
+  if Index > FDefinedAnsi then
+    Result := FHash.Names[Index][1]
+    else
+      for I := 0 to Length(FAnsi) - 1 do
+        if Assigned(FAnsi[I]) then
+          if Index > 0 then
+            Dec(Index)
+            else
+            begin
+              Result := WideChar(I);
+              Exit;
+            end;
+end;
+
+function TRpnOperators.ClassAt(Index: Integer): TRpnOperatorClass;
+var
+  I: Byte;
+begin
+  Result := NIL;
+
+  if Index > FDefinedAnsi then
+    Result := TRpnOperatorClass(FHash.Objects[Index])
+    else
+      for I := 0 to Length(FAnsi) - 1 do
+        if Assigned(FAnsi[I]) then
+          if Index > 0 then
+            Dec(Index)
+            else
+            begin
+              Result := FAnsi[I];
+              Exit;
+            end;
 end;
 
 { TRpnVariables }
@@ -294,7 +534,7 @@ procedure TFloatStack.Push(Value: Single);
 begin
   inherited Push(Pointer(Value));
 end;
-                
+
 { TCompiledRPN }
 
 constructor TCompiledRPN.Create;
@@ -341,38 +581,80 @@ begin
     raise EInvalidRpnFloatStr.Create(Str, Expr);
 end;
 
+function RpnVarChars: WideString;
+begin
+  Result := FRpnVarChars;
+end;
+
+procedure SetRpnVarChars(const Chars: WideString);
+begin
+  if TrimLeft(Chars) = '' then
+    raise EEmptyRpnVarCharList.Create;
+
+  FRpnVarChars := Chars;
+  ClearRpnCache;
+end;
+
+procedure ClearRpnCache;
+begin
+  if CachedExprs <> NIL then
+    CachedExprs.Clear;
+end;
+
+procedure RegisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
+begin
+  if DefaultOperators = NIL then
+    DefaultOperators := TRpnOperators.Create;
+
+  DefaultOperators.Add(Op, OpClass);
+end;
+
+procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
+begin
+  DefaultOperators.Delete(Op);
+end;
+
+procedure UnregisterDefaultRpnOperatorsOf(OpClass: TRpnOperatorClass);
+begin
+  DefaultOperators.DeleteAll(OpClass);
+end;
+
 function NormalizeRPN(Expr: WideString): WideString;
 begin
   Result := LowerCase(Trim(Expr));
 end;
 
-function GetCache(Expr: WideString): TCompiledRPN;
+function GetCache(Expr: WideString; Operators: TRpnOperators): TCompiledRPN;
 begin
-  if CachedExprs = NIL then
+  if (CachedExprs = NIL) or ((Operators <> NIL) and (Operators <> DefaultOperators)) then
     Result := NIL
     else
       Result := TCompiledRPN( CachedExprs[NormalizeRPN(Expr)] );
 end;
 
-procedure SetCache(Expr: WideString; COmpiled: TCompiledRPN);
+procedure SetCache(Expr: WideString; Operators: TRpnOperators; COmpiled: TCompiledRPN);
 begin
-  if CachedExprs = NIL then
-    with CachedExprs do
-    begin
-      CachedExprs := TObjectHash.Create(True);
-      CaseSensitive := False;
-    end;
+  if (Operators = NIL) or (Operators = DefaultOperators) then
+  begin
+    if CachedExprs = NIL then
+      with CachedExprs do
+      begin
+        CachedExprs := TObjectHash.Create(True);
+        CaseSensitive := False;
+      end;
 
-  CachedExprs.AddObject(NormalizeRPN(Expr), Compiled);
+    CachedExprs.AddObject(NormalizeRPN(Expr), Compiled);
+  end;
 end;
 
-function CompileRPN(Expr: WideString): TCompiledRPN;
+function CompileRPN(Expr: WideString; Operators: TRpnOperators = NIL): TCompiledRPN;
 var
   Pos: Integer;
+  VarChars: WideString;
 
   function NextChar(Chars: WideString): Boolean;
   begin
-    Result := (Pos < Length(Expr)) and (PosW(Expr[Pos], Chars) > 0);
+    Result := (Pos < Length(Expr)) and (PosW(Expr[Pos + 1], Chars) > 0);
   end;
 
   procedure Operator(AClass: TRpnOperatorClass; OpLength: Integer = 1);
@@ -381,11 +663,16 @@ var
     Inc(Pos, OpLength);
   end;
 
-  function CutName(Chars: WideString): WideString;
+  function CharMatches(Ch: WideChar; const Chars: WideString): Boolean;
+  begin
+    Result := (PosW(Ch, Chars) <> 0) or (PosW(LowerCase(Ch), Chars) <> 0);
+  end;
+
+  function CutName(const Chars: WideString): WideString;
   begin
     Result := '';
 
-    while (Pos <= Length(Expr)) and (PosW(Expr[Pos], Chars) <> 0) do
+    while (Pos <= Length(Expr)) and CharMatches(Expr[Pos], Chars) do
     begin
       Result := Result + Expr[Pos];
       Inc(Pos);
@@ -394,66 +681,84 @@ var
 
     procedure ConstOperand;
     begin
-      Result.Add(TRpnConst.Create( StrToFloatRPN(CutName('0123456789')) ));
+      Result.Add(TRpnConst.Create( StrToFloatRPN(CutName('0123456789,.')) ));
     end;
 
     procedure Variable;
     begin
-      Result.Add(TRpnVariable.Create( CutName(RpnVarChars) ));
+      Result.Add(TRpnVariable.Create( CutName(VarChars) ));
     end;
 
+var
+  Handled, IsVar: Boolean;
+  OpClass: TRpnOperatorClass;
 begin
   if NormalizeRPN(Expr) = '' then
     raise EEmptyRPN.Create;
+
+  if Operators = NIL then
+    Operators := DefaultOperators;
+
+  VarChars := LowerCase(FRpnVarChars);
 
   Result := TCompiledRPN.Create;
   try
     Pos := 1;
 
     while Pos <= Length(Expr) do
-      case Char(Expr[Pos]) of
-      ' ':        Inc(Pos);
-      '0'..'9':   ConstOperand;
-      '+':        Operator(TRpnAdd);
-      '*':        Operator(TRpnMultiply);
-      '-':
-        if NextChar('0123456789') then
-          ConstOperand
-          else
-            Operator(TRpnSubstract);
-      '/':
-        if (Pos >= Length(Expr)) or NextChar(' 0123456789') then
-          Operator(TRpnDivide)
-          else
-            Variable;
-      else
-        if PosW(Expr[Pos], RpnVarChars) <> 0 then
+    begin
+      Handled := True;
+
+        case Char(Expr[Pos]) of
+        ' ':        Inc(Pos);
+        '0'..'9':   ConstOperand;
+        '-', '+':
+          if NextChar('0123456789') then
+            ConstOperand
+            else
+              Handled := False;
+        else
+          Handled := False;
+        end;
+
+      if not Handled then
+      begin
+        OpClass := Operators[Expr[Pos]];
+        IsVar := CharMatches(Expr[Pos], VarChars);
+
+        if Assigned(OpClass) and IsVar and
+           (Pos < Length(Expr)) and not NextChar(' 0123456789') then
           Variable
-          else
-            raise EWrongRpnSyntax.Create(Expr, Pos);
+          else if Assigned(OpClass) then
+            Operator(OpClass)
+            else if IsVar then
+              Variable
+              else
+                raise EWrongRpnSyntax.Create(Expr, Pos);
       end;
+    end;
   except
     Result.Free;
     raise;
   end;
 end;
 
-function CompileCaching(Expr: WideString): TCompiledRPN;
+function CompileCaching(Expr: WideString; Operators: TRpnOperators = NIL): TCompiledRPN;
 begin
-  Result := GetCache(Expr);
+  Result := GetCache(Expr, Operators);
 
   if Result = NIL then
   begin
     Result := CompileRPN(Expr);
-    SetCache(Expr, Result);
+    SetCache(Expr, Operators, Result);
   end;
 end;
 
-function EvalRPN(Expr: WideString; Variables: TRpnVariables): Single;
+function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators): Single;
 var
   Eval: TRpnEvaluator;
 begin
-  Eval := TRpnEvaluator.Create(CompileCaching(Expr));
+  Eval := TRpnEvaluator.Create(CompileCaching(Expr, Operators));
   try
     Eval.Variables := Variables;
     Result := Eval.Evaluate;
@@ -462,11 +767,11 @@ begin
   end;
 end;
 
-function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback): Single;
+function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators): Single;
 var
   Eval: TRpnEvaluator;
 begin
-  Eval := TRpnEvaluator.Create(CompileCaching(Expr));
+  Eval := TRpnEvaluator.Create(CompileCaching(Expr, Operators));
   try
     Eval.VarCallback := VarCallback;
     Result := Eval.Evaluate;
@@ -479,13 +784,18 @@ end;
 
 constructor TRpnEvaluator.Create(Compiled: TCompiledRPN);
 begin
-  FCompiled := Compiled;
+  FOperators := TRpnOperators.Create;
+  FOperators.Copy(DefaultOperators);
+
   FStack := TFloatStack.Create;
+
+  FCompiled := Compiled;
 end;
 
 destructor TRpnEvaluator.Destroy;
 begin
   FStack.Free;
+  FOperators.Free;
   inherited;
 end;
 
@@ -495,7 +805,7 @@ var
   Item: TObject;
 begin
   Result := 0;
-  
+
   for I := 0 to FCompiled.Count - 1 do
   begin
     Item := FCompiled[I];
@@ -549,9 +859,9 @@ begin
   Result := A + B;
 end;
 
-{ TRpnSubstract }
+{ TRpnSubtract }
 
-function TRpnSubstract.Eval(A, B: Single): Single;
+function TRpnSubtract.Eval(A, B: Single): Single;
 begin
   Result := A - B;
 end;
@@ -570,9 +880,31 @@ begin
   Result := A / B;
 end;
 
+{ TRpnPower }
+
+function TRpnPower.Eval(A, B: Single): Single;
+begin
+  Result := Power(A, B);
+end;
+
+{ TRpnModulus }
+
+function TRpnModulus.Eval(A, B: Single): Single;
+begin
+  Result := A - Int(A / B) * B;
+end;
+
 initialization
+  RegisterDefaultRpnOperator('+', TRpnAdd);
+  RegisterDefaultRpnOperator('-', TRpnSubtract);
+  RegisterDefaultRpnOperator('*', TRpnMultiply);
+  RegisterDefaultRpnOperator('/', TRpnDivide);
+  RegisterDefaultRpnOperator('^', TRpnPower);
+  RegisterDefaultRpnOperator('%', TRpnModulus);
 
 finalization
   if CachedExprs <> NIL then
     CachedExprs.Free;
+  if DefaultOperators <> NIL then
+    DefaultOperators.Free;
 end.

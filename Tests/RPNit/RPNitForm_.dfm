@@ -69,7 +69,7 @@ object RPNitForm: TRPNitForm
     Height = 21
     Anchors = [akLeft, akTop, akRight]
     TabOrder = 1
-    Text = '5 1 2 - * var +'
+    Text = '5 1 2 - * Var +'
   end
   object lsVars: TListBox
     Left = 0
@@ -79,9 +79,10 @@ object RPNitForm: TRPNitForm
     Anchors = [akLeft, akTop, akRight, akBottom]
     ItemHeight = 13
     Items.Strings = (
-      'var = 1,3')
+      'Var = 1,3')
     TabOrder = 2
     OnDblClick = lsVarsDblClick
+    OnMouseDown = lsVarsMouseDown
   end
   object Button1: TButton
     Left = 40

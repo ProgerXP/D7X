@@ -27,6 +27,8 @@ type
     procedure ApplicationEventsException(Sender: TObject; E: Exception);
     procedure Button4Click(Sender: TObject);
     procedure FormShow(Sender: TObject);
+    procedure lsVarsMouseDown(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
   protected
     procedure AddVar(Name, Value: String);
   end;
@@ -80,7 +82,7 @@ begin
       lsVars.Items.BeginUpdate;
       try
         lsVars.Clear;
-        
+
         for I := 0 to List.Count - 1 do
           AddVar(List.Names[I], List.ValueFromIndex[I]);
       finally
@@ -170,6 +172,16 @@ end;
 procedure TRPNitForm.FormShow(Sender: TObject);
 begin
   edExpr.SetFocus;
+end;
+
+procedure TRPNitForm.lsVarsMouseDown(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+var
+  I: Integer;
+begin
+  I := lsVars.ItemAtPos(Point(X, Y), True);
+  if (I <> -1) and (Button = mbRight) then
+    lsVars.Items.Delete(I);
 end;
 
 end.
