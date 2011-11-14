@@ -10,7 +10,7 @@ interface
 uses Windows, SysUtils, Math, Classes, Contnrs, StringsW, StringUtils;
 
 type
-  TRpnVarCallback = function (Name: WideString): Single of object;
+  TRpnVarCallback = function (Name: WideString): Double of object;
   TRpnOperatorClass = class of TRpnOperator;
 
   ERPN = class (Exception)
@@ -40,6 +40,10 @@ type
 
     ERpnEvaluation = class (ERPN)
     end;
+
+      EEmptyStackOperation = class (ERpnEvaluation)
+        constructor Create(Operation: String);
+      end;
 
       ENotEnoughRpnArguments = class (ERpnEvaluation)
         constructor Create(Operator: String; NeedArgs, HasArgs: Integer);
@@ -91,23 +95,34 @@ type
 
   TRpnVariables = class (THash)
   protected
-    function GetVar(const Name: WideString): Single;
-    procedure PutVar(const Name: WideString; const Value: Single);
+    procedure Notify(Index: Integer; Action: TListNotification); override;
+
+    function GetVar(const Name: WideString): Double;
+    procedure PutVar(const Name: WideString; const Value: Double);
   public
     // returns 0 if variable didn't exist.
-    property Variables[const Name: WideString]: Single read GetVar write PutVar; default;
+    property Variables[const Name: WideString]: Double read GetVar write PutVar; default;
     function Exists(const Name: WideString): Boolean;
-    function GetIfExists(const Name: WideString; out Value: Single): Boolean;
+    function GetIfExists(const Name: WideString; out Value: Double): Boolean;
 
     procedure CopyAsKeyValuesFrom(Other: TStrings); overload;
     procedure CopyAsKeyValuesFrom(Other: TStringsW); overload;
   end;
 
-  TFloatStack = class (TStack)
+  TRpnOperandStack = class
+  protected
+    FValues: array[0..8191] of Double;    // 64 KiB
+    FCount: Integer;
   public
-    function Peek: Single; reintroduce;
-    procedure Push(Value: Single); reintroduce;
-    function Pop: Single; reintroduce;
+    constructor Create;
+
+    procedure Clear;
+    function IsEmpty: Boolean;
+    property Count: Integer read FCount;
+
+    function Peek: Double;
+    procedure Push(Value: Double);
+    function Pop: Double;
   end;
 
   TCompiledRPN = class (TObjectList)
@@ -119,7 +134,7 @@ type
   TRpnEvaluator = class
   protected
     FCompiled: TCompiledRPN;
-    FStack: TFloatStack;
+    FStack: TRpnOperandStack;
 
     FOperators: TRpnOperators;
     FVariables: TRpnVariables;
@@ -132,23 +147,23 @@ type
     property Variables: TRpnVariables read FVariables write FVariables;
     property VarCallback: TRpnVarCallback read FVarCallback write FVarCallback;
 
-    function Evaluate: Single;
+    function Evaluate: Double;
 
-    function GetVariable(Name: WideString): Single;
-    property Stack: TFloatStack read FStack;
+    function GetVariable(Name: WideString): Double;
+    property Stack: TRpnOperandStack read FStack;
   end;
 
   TRpnOperand = class
   public
-    function Value(Eval: TRpnEvaluator): Single; virtual; abstract;
+    function Value(Eval: TRpnEvaluator): Double; virtual; abstract;
   end;
 
     TRpnConst = class (TRpnOperand)
     protected
-      FValue: Single;
+      FValue: Double;
     public
-      constructor Create(Value: Single);
-      function Value(Eval: TRpnEvaluator): Single; override;
+      constructor Create(Value: Double);
+      function Value(Eval: TRpnEvaluator): Double; override;
     end;
 
     TRpnVariable = class (TRpnOperand)
@@ -158,23 +173,23 @@ type
       constructor Create(Name: WideString);
 
       property Name: WideString read FName;
-      function Value(Eval: TRpnEvaluator): Single; override;
+      function Value(Eval: TRpnEvaluator): Double; override;
     end;
 
   TRpnOperator = class
   public
-    function Execute(Eval: TRpnEvaluator): Single; virtual; abstract;
+    function Execute(Eval: TRpnEvaluator): Double; virtual; abstract;
   end;
 
     TRpnMathOperator = class (TRpnOperator)
     protected
-      function Eval(A, B: Single): Single; virtual; abstract;
+      function Eval(A, B: Double): Double; virtual; abstract;
     public
-      function Execute(Eval: TRpnEvaluator): Single; override;
+      function Execute(Eval: TRpnEvaluator): Double; override;
     end;
 
 // raises EInvalidRpnFloatStr.
-function StrToFloatRPN(Str: WideString; Expr: WideString = ''): Single;
+function StrToFloatRPN(Str: WideString; Expr: WideString = ''): Double;
 function RpnVarChars: WideString;
 procedure SetRpnVarChars(const Chars: WideString);
 procedure ClearRpnCache;
@@ -185,40 +200,46 @@ procedure RegisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
 procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
 procedure UnregisterDefaultRpnOperatorsOf(OpClass: TRpnOperatorClass);
 
-function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators = NIL): Single; overload;
-function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators = NIL): Single; overload;
+function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators = NIL): Double; overload;
+function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators = NIL): Double; overload;
 
 implementation
 
 type
+  TVarValue = class
+  public
+    Value: Double;
+    constructor Create(AValue: Double);
+  end;
+
   TRpnAdd = class (TRpnMathOperator)
   protected
-    function Eval(A, B: Single): Single; override;
+    function Eval(A, B: Double): Double; override;
   end;
 
   TRpnSubtract = class (TRpnMathOperator)
   protected
-    function Eval(A, B: Single): Single; override;
+    function Eval(A, B: Double): Double; override;
   end;
 
   TRpnMultiply = class (TRpnMathOperator)
   protected
-    function Eval(A, B: Single): Single; override;
+    function Eval(A, B: Double): Double; override;
   end;
 
   TRpnDivide = class (TRpnMathOperator)
   protected
-    function Eval(A, B: Single): Single; override;
+    function Eval(A, B: Double): Double; override;
   end;
 
   TRpnPower = class (TRpnMathOperator)
   protected
-    function Eval(A, B: Single): Single; override;
+    function Eval(A, B: Double): Double; override;
   end;
 
   TRpnModulus = class (TRpnMathOperator)
   protected
-    function Eval(A, B: Single): Single; override;
+    function Eval(A, B: Double): Double; override;
   end;
 
 var
@@ -266,6 +287,11 @@ begin
       CreateFmt('Invalid floating point constant "%s" in RPN expression "%s".', [Num, Expr]);
 end;
 
+constructor EEmptyStackOperation.Create(Operation: String);
+begin
+  CreateFmt('Attempted to %s an empty TRpnOperandStack.', [Operation]);
+end;
+
 constructor ENotEnoughRpnArguments.Create(Operator: String; NeedArgs, HasArgs: Integer);
 begin
   if Copy(Operator, 0, 4) = 'TRpn' then
@@ -294,6 +320,13 @@ constructor EEmptyRpnStack.Create;
 begin
   inherited Create('There were no items left on stack after evaluating an RPN expression' +
                    ' - but at least one is required to determine the expression result.');
+end;
+
+{ TVarValue }
+
+constructor TVarValue.Create(AValue: Double);
+begin
+  Value := AValue;
 end;
 
 { TRpnOperators }
@@ -466,21 +499,21 @@ end;
 
 { TRpnVariables }
 
-function TRpnVariables.GetVar(const Name: WideString): Single;
+function TRpnVariables.GetVar(const Name: WideString): Double;
 begin
   if not GetIfExists(Name, Result) then
     Result := 0;
 end;
 
-procedure TRpnVariables.PutVar(const Name: WideString; const Value: Single);
+procedure TRpnVariables.PutVar(const Name: WideString; const Value: Double);
 var
   I: Integer;
 begin
   I := IndexOf(Name);
   if I = -1 then
-    AddObject(Name, TObject(Value))
+    AddObject(Name, TVarValue.Create(Value))
     else
-      Objects[I] := TObject(Value);
+      TVarValue(Objects[I]).Value := Value;
 end;
 
 function TRpnVariables.Exists(const Name: WideString): Boolean;
@@ -488,14 +521,14 @@ begin
   Result := IndexOfName(Name) <> -1;
 end;
 
-function TRpnVariables.GetIfExists(const Name: WideString; out Value: Single): Boolean;
+function TRpnVariables.GetIfExists(const Name: WideString; out Value: Double): Boolean;
 var
   I: Integer;
 begin
   I := IndexOf(Name);
   Result := I <> -1;
   if Result then
-    Value := Single(Objects[I]);
+    Value := TVarValue(Objects[I]).Value;
 end;
 
 procedure TRpnVariables.CopyAsKeyValuesFrom(Other: TStrings);
@@ -518,21 +551,54 @@ begin
       Variables[Trim(Name)] := StrToFloatRPN(Trim(Value));
 end;
 
-{ TFloatStack }
-
-function TFloatStack.Peek: Single;
+procedure TRpnVariables.Notify(Index: Integer; Action: TListNotification);
 begin
-  Result := Single(inherited Peek);
+  if Action = lnDeleted then
+    Objects[Index].Free;
+
+  inherited;
 end;
 
-function TFloatStack.Pop: Single;
+{ TRpnOperandStack }
+
+constructor TRpnOperandStack.Create;
 begin
-  Result := Single(inherited Pop);
+  Clear;
 end;
 
-procedure TFloatStack.Push(Value: Single);
+procedure TRpnOperandStack.Clear;
 begin
-  inherited Push(Pointer(Value));
+  FCount := 0;
+end;
+
+function TRpnOperandStack.IsEmpty: Boolean;
+begin
+  Result := FCount < 1;
+end;
+
+function TRpnOperandStack.Peek: Double;
+begin
+  if IsEmpty then
+    raise EEmptyStackOperation.Create('Peek')
+    else
+      Result := FValues[FCount - 1];
+end;
+
+function TRpnOperandStack.Pop: Double;
+begin
+  if IsEmpty then
+    raise EEmptyStackOperation.Create('Pop')
+    else
+    begin
+      Dec(FCount);
+      Result := FValues[FCount];
+    end;
+end;
+
+procedure TRpnOperandStack.Push(Value: Double);
+begin
+  FValues[FCount] := Value;
+  Inc(FCount);
 end;
 
 { TCompiledRPN }
@@ -544,12 +610,12 @@ end;
 
 { TRpnConst }
 
-constructor TRpnConst.Create(Value: Single);
+constructor TRpnConst.Create(Value: Double);
 begin
   FValue := Value;
 end;
 
-function TRpnConst.Value(Eval: TRpnEvaluator): Single;
+function TRpnConst.Value(Eval: TRpnEvaluator): Double;
 begin
   Result := FValue;
 end;
@@ -561,14 +627,14 @@ begin
   FName := Name;
 end;
 
-function TRpnVariable.Value(Eval: TRpnEvaluator): Single;
+function TRpnVariable.Value(Eval: TRpnEvaluator): Double;
 begin
   Result := Eval.GetVariable(FName);
 end;
 
 { Functions }
 
-function StrToFloatRPN(Str: WideString; Expr: WideString = ''): Single;
+function StrToFloatRPN(Str: WideString; Expr: WideString = ''): Double;
 var
   FS: TFormatSettings;
 begin
@@ -754,7 +820,7 @@ begin
   end;
 end;
 
-function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators): Single;
+function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators): Double;
 var
   Eval: TRpnEvaluator;
 begin
@@ -767,7 +833,7 @@ begin
   end;
 end;
 
-function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators): Single;
+function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators): Double;
 var
   Eval: TRpnEvaluator;
 begin
@@ -787,7 +853,7 @@ begin
   FOperators := TRpnOperators.Create;
   FOperators.Copy(DefaultOperators);
 
-  FStack := TFloatStack.Create;
+  FStack := TRpnOperandStack.Create;
 
   FCompiled := Compiled;
 end;
@@ -799,7 +865,7 @@ begin
   inherited;
 end;
 
-function TRpnEvaluator.Evaluate: Single;
+function TRpnEvaluator.Evaluate: Double;
 var
   I: Integer;
   Item: TObject;
@@ -826,7 +892,7 @@ begin
         raise EEmptyRpnStack.Create;
 end;
 
-function TRpnEvaluator.GetVariable(Name: WideString): Single;
+function TRpnEvaluator.GetVariable(Name: WideString): Double;
 begin
   if Variables <> NIL then
   begin
@@ -841,9 +907,9 @@ end;
 
 { TRpnMathOperator }
 
-function TRpnMathOperator.Execute(Eval: TRpnEvaluator): Single;
+function TRpnMathOperator.Execute(Eval: TRpnEvaluator): Double;
 var
-  A: Single;
+  A: Double;
 begin
   if Eval.Stack.Count < 2 then
     raise ENotEnoughRpnArguments.Create(ClassName, 2, Eval.Stack.Count);
@@ -854,42 +920,42 @@ end;
 
 { TRpnAdd }
 
-function TRpnAdd.Eval(A, B: Single): Single;
+function TRpnAdd.Eval(A, B: Double): Double;
 begin
   Result := A + B;
 end;
 
 { TRpnSubtract }
 
-function TRpnSubtract.Eval(A, B: Single): Single;
+function TRpnSubtract.Eval(A, B: Double): Double;
 begin
   Result := A - B;
 end;
 
 { TRpnMultiply }
 
-function TRpnMultiply.Eval(A, B: Single): Single;
+function TRpnMultiply.Eval(A, B: Double): Double;
 begin
   Result := A * B;
 end;
 
 { TRpnDivide }
 
-function TRpnDivide.Eval(A, B: Single): Single;
+function TRpnDivide.Eval(A, B: Double): Double;
 begin
   Result := A / B;
 end;
 
 { TRpnPower }
 
-function TRpnPower.Eval(A, B: Single): Single;
+function TRpnPower.Eval(A, B: Double): Double;
 begin
   Result := Power(A, B);
 end;
 
 { TRpnModulus }
 
-function TRpnModulus.Eval(A, B: Single): Single;
+function TRpnModulus.Eval(A, B: Double): Double;
 begin
   Result := A - Int(A / B) * B;
 end;

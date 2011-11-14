@@ -46,9 +46,11 @@ type
 // todo: use StringTypeW in RemoveNonWordChars?
 
 // unlike TryStrToInt this considers strings with leading/trailing spaces as invalid.
-function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;            
+function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;
 function TryStrToFloatStrict(const S: String; out Value: Single;
-  const FormatSettings: TFormatSettings): Boolean;
+  const FormatSettings: TFormatSettings): Boolean; overload;
+function TryStrToFloatStrict(const S: String; out Value: Double;
+  const FormatSettings: TFormatSettings): Boolean; overload;
 function DetectEolnStyleIn(Str: WideString): WideString;
 
 // not more than 65536 resulting pieces are supported.
@@ -190,6 +192,15 @@ begin
 end;
 
 function TryStrToFloatStrict(const S: String; out Value: Single;
+  const FormatSettings: TFormatSettings): Boolean;
+begin
+  if (S <> '') and (S[1] > ' ') and (S[Length(S)] > ' ') then
+    Result := TryStrToFloat(S, Value, FormatSettings)
+    else
+      Result := False;
+end;
+
+function TryStrToFloatStrict(const S: String; out Value: Double;
   const FormatSettings: TFormatSettings): Boolean;
 begin
   if (S <> '') and (S[1] > ' ') and (S[Length(S)] > ' ') then
