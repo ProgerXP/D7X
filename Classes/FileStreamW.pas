@@ -10,9 +10,12 @@ type
   protected
     FFileName: WideString;
   public
-    // this method handles UTF-8/Unicode/Unicode-BE files with signatures treating others
-    // as using native ANSI charset. 
-    class function LoadUnicodeFrom(const FileName: WideString): WideString;
+    // this method handles UTF-8/Unicode/Unicode-BE files with signatures treating others as
+    // using native ANSI charset. If AsIsAnsi = True signatureless files are not converted from
+    // system codepage to Unicode but simply copied with hi-order by set to 0. This is useful 
+    // if you're planning to manually convert it later and do not want any chars get corrupted.
+    class function LoadUnicodeFrom(const FileName: WideString;
+      AsIsAnsi: Boolean = False): WideString;
 
     constructor Create(const FileName: WideString; Mode: Word); overload;
 
@@ -61,7 +64,8 @@ end;
 
 { TFileStreamW }
 
-class function TFileStreamW.LoadUnicodeFrom(const FileName: WideString): WideString;
+class function TFileStreamW.LoadUnicodeFrom(const FileName: WideString;
+  AsIsAnsi: Boolean = False): WideString;
 type
   TEncoding = (ANSI, UTF8, Unicode, UnicodeBE);
 var
@@ -95,7 +99,14 @@ begin
 
     case Encoding of              
     ANSI:
-      Result := Data;   // Delphi will convert strings automatically.
+      if AsIsAnsi then
+      begin
+        SetLength(Result, Length(Data));
+        for I := 1 to Length(Data) do
+          Result[I] := WideChar( Byte(Data[I]) );
+      end
+        else
+          Result := Data;   // Delphi converts strings automatically from system codepage.
     UTF8:
       Result := UTF8Decode(Data);
     Unicode, UnicodeBE:

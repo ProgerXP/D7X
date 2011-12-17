@@ -1475,12 +1475,12 @@ end;
 
 constructor TObjectHash.Create;
 begin
-  inherited;
-  FOwnsObjects := True;
+  Create(True);
 end;
 
 constructor TObjectHash.Create(OwnsObjects: Boolean);
 begin
+  inherited Create;
   FOwnsObjects := OwnsObjects;
 end;
 
