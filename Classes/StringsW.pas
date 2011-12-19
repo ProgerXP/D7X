@@ -12,6 +12,8 @@ type
   TListSortCompare = Classes.TListSortCompare;
   TListNotification = Classes.TListNotification;
 
+  TStringListW = class;
+
   TStringsW = class (TPersistent)
   protected
     FDefined: TStringsDefined;
@@ -112,6 +114,7 @@ type
     procedure AppendTo(const Other: TStringsW); overload;
     procedure CopyTo(const Other: TStrings); overload;
     procedure CopyTo(const Other: TStringsW); overload;
+    function NameList: TStringListW; virtual;
     property AsString: WideString read GetTextStr;
     function Extract(Index: Integer): TObject;             
     function IndexOfInstanceOf(AClass: TClass; CanInherit: Boolean = True; StartAt: Integer = 0): Integer;
@@ -119,8 +122,6 @@ type
     function Delete(Str: WideString): Boolean; overload;
     function DeleteByName(Name: WideString): Boolean;
   end;
-
-  TStringListW = class;
 
   PStringItemW = ^TStringItemW;
   TStringItemW = record
@@ -985,6 +986,20 @@ begin
   Result := I <> -1;
   if Result then
     Delete(I);
+end;
+
+function TStringsW.NameList: TStringListW;
+var
+  I: Integer;
+begin
+  Result := TStringListW.Create;
+  Result.BeginUpdate;
+  try
+    for I := 0 to Count - 1 do
+      Result.Add(Names[I]);
+  finally
+    Result.EndUpdate;
+  end;
 end;
 
 { TStringListW }
