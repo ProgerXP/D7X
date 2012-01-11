@@ -17,7 +17,7 @@ type
     class function LoadUnicodeFrom(const FileName: WideString;
       AsIsAnsi: Boolean = False): WideString;
 
-    constructor Create(const FileName: WideString; Mode: Word); overload;
+    constructor Create(const FileName: WideString; Mode: Word); 
 
     // it will always create a new file but with the specified access (not like
     //   FileCreate, which always opens it with exclusive access).
@@ -133,6 +133,8 @@ function FileOpenW(const FileName: WideString; Mode: LongWord): Integer;
 begin
   Result := FileCreateW(FileName, Mode, OPEN_EXISTING)
 end;
+
+{ TFileStreamW }
 
 constructor TFileStreamW.Create(const FileName: WideString; Mode: Word);
 begin

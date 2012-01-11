@@ -2,7 +2,7 @@ unit FileMask;
 
 interface
 
-uses SysUtils, Windows;
+uses Windows, SysUtils, Math, StringUtils;
 
 type
   TFMStack = class
@@ -21,7 +21,7 @@ type
     destructor Destroy; override;
     procedure Clear;
 
-    procedure Push(const BasePath: WideString; const Handle: DWord; const Rec: TWin32FindDataW);
+    procedure Push(const BasePath: WideString; Handle: DWord; const Rec: TWin32FindDataW);
     procedure Pop;
     property Height: Integer read FHeight;
     function TopHandle: DWord;
@@ -33,6 +33,7 @@ type
   TMaskResolver = class
   protected
     FMaxRecursionDepth: Word;
+    FCaseSensitive: Boolean;
     FMask, FNameMask: WideString;
     FSearches: TFMStack;
 
@@ -40,93 +41,31 @@ type
     procedure SearchNextFile;
     function ShouldSkip(const Name: WideString): Boolean;
 
-    procedure SetMaxRecursionDepth(const Value: Word);
+    procedure SetMaxRecursionDepth(Value: Word);
     function GetRecursive: Boolean;
-    procedure SetRecursive(const Value: Boolean);
+    procedure SetRecursive(Value: Boolean);
     procedure SetMask(const Value: WideString);
   public
-    CaseSensitive: Boolean;
-
     constructor Create;
     destructor Destroy; override;
     procedure ToStart;
 
-    property Recursive: Boolean read GetRecursive write SetRecursive;
     property MaxRecursionDepth: Word read FMaxRecursionDepth write SetMaxRecursionDepth default 50;  // inclusive.
+    property Recursive: Boolean read GetRecursive write SetRecursive;
+    property CaseSensitive: Boolean read FCaseSensitive write FCaseSensitive default False;
+
     property Mask: WideString read FMask write SetMask;
     function HasMore: Boolean;
     function Next: WideString;
     // HasMore isn't always accurate and for use in a loop you must call Next and check
-    // if it returned ''. Or you can use this method as a shortcut:
-    //   while PutNextIn(FileName) do ...
+    // if it has returned ''. Or you can use this method as a shortcut:
+    //   while PutNextTo(FileName) do ...
     // instead of
     //   while True do begin FileName := Next; if FileName = '' then Break; ... end;
-    function PutNextIn(out NextFile: WideString): Boolean;
+    function PutNextTo(out NextFile: WideString): Boolean;
   end;
 
 implementation
-
-uses Math;
-
-{ Common routines }
-
-type
-  TMaskMatchInfo = record
-    Matched: Boolean;
-    StrPos: Word;
-    MatchLength: Word;
-  end;
-
-function MaskMatchInfo(const Str, Mask: WideString; StartingPos: Word = 1): TMaskMatchInfo;
-var
-  BeginningAnyMatch, EndingAnyMatch: Word;
-  Info: TMaskMatchInfo;
-
-  function Match(const StrI, MaskI: Word): Boolean;
-  begin
-    if MaskI > Length(Mask) then
-      Result := StrI = Length(Str) + 1
-      else if StrI > Length(Str) then
-        Result := MaskI > EndingAnyMatch
-        else if (Mask[MaskI] = '*') or (Mask[MaskI] = '+') then
-          Result := Match(Succ(StrI), Succ(MaskI)) or Match(Succ(StrI), MaskI) or
-                    ((Mask[MaskI] = '*') and (Match(StrI, Succ(MaskI)))) or (MaskI = Length(Mask))
-          else
-             Result := ((Mask[MaskI] = Str[StrI]) or (Mask[MaskI] = '?')) and
-                      Match(Succ(StrI), Succ(MaskI));
-
-    if Result and ((MaskI <= Length(Mask)) and (Mask[MaskI] <> '*')) then
-    begin
-      Info.StrPos := Min(Info.StrPos, StrI);
-      Info.MatchLength := Max(Info.MatchLength, StrI)
-    end
-  end;
-
-begin
-  Info.StrPos := $FFFF;
-  Info.MatchLength := 0;
-
-  BeginningAnyMatch := 1;
-  while (BeginningAnyMatch < Length(Mask)) and (Mask[BeginningAnyMatch] = '*') do
-    Inc(BeginningAnyMatch);
-
-  EndingAnyMatch := Length(Mask);
-  while (EndingAnyMatch > 0) and (Mask[EndingAnyMatch] = '*') do
-    Dec(EndingAnyMatch);
-
-  Info.Matched := Match(StartingPos, 1);
-
-  if Info.StrPos = $FFFF then
-    Info.MatchLength := 0
-    else
-      Dec(Info.MatchLength, Info.StrPos - 1);
-  Result := Info
-end;
-
-function MaskMatch(const Str, Mask: WideString): Boolean;
-begin
-  Result := MaskMatchInfo(Str, Mask).Matched
-end;
 
 { TFMStack }
 
@@ -186,7 +125,7 @@ begin
   end;
 end;
 
-procedure TFMStack.Push(const BasePath: WideString; const Handle: DWord; const Rec: TWin32FindDataW);
+procedure TFMStack.Push(const BasePath: WideString; Handle: DWord; const Rec: TWin32FindDataW);
 begin
   FItems[FHeight].BasePath := BasePath;
   FItems[FHeight].Handle := Handle;
@@ -208,7 +147,7 @@ constructor TMaskResolver.Create;
 begin
   FMaxRecursionDepth := 0;
   Recursive := True;
-  CaseSensitive := False;
+  FCaseSensitive := False;
   FSearches := TFMStack.Create;
 
   Mask := '';
@@ -220,7 +159,7 @@ begin
   inherited;
 end;
 
-procedure TMaskResolver.SetMaxRecursionDepth(const Value: Word);
+procedure TMaskResolver.SetMaxRecursionDepth(Value: Word);
 begin
   if Value < 1 then
     FMaxRecursionDepth := 1
@@ -233,7 +172,7 @@ begin
   Result := FMaxRecursionDepth > 1;
 end;
 
-procedure TMaskResolver.SetRecursive(const Value: Boolean);
+procedure TMaskResolver.SetRecursive(Value: Boolean);
 begin
   if not Value then
     FMaxRecursionDepth := 1
@@ -248,7 +187,7 @@ begin
     Insert('.' + PathDelim, FMask, 1);
 
   FNameMask := ExtractFileName(FMask);
-  if not CaseSensitive then
+  if not FCaseSensitive then
     FNameMask := WideLowerCase(FNameMask);
   if FNameMask = '' then
     FNameMask := '*';
@@ -316,8 +255,8 @@ begin
           else
             SearchNextFile;
 
-        if (CaseSensitive and MaskMatch(Result, FNameMask)) or
-           (not CaseSensitive and MaskMatch(WideLowerCase(Result), FNameMask)) then
+        if (FCaseSensitive and MaskMatch(Result, FNameMask)) or
+           (not FCaseSensitive and MaskMatch(WideLowerCase(Result), FNameMask)) then
         begin
           Insert(BasePath, Result, 1);
           Exit;
@@ -333,7 +272,7 @@ begin
   Result := (Length(Name) = 0) or (Name = '.') or (Name = '..');
 end;
 
-function TMaskResolver.PutNextIn(out NextFile: WideString): Boolean;
+function TMaskResolver.PutNextTo(out NextFile: WideString): Boolean;
 begin
   NextFile := Next;
   Result := Length(NextFile) <> 0;

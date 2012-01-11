@@ -1,15 +1,13 @@
 unit CommandLine;
 
-// todo: support aliases for tasks and options.
-
 interface
 
 { This unit is standalone. }
 
-uses Windows, SysUtils, Classes;
+uses Windows, SysUtils, Math, Classes, StringUtils, Utils, StringsW;
 
 const
-  MaxCLItemCount = $7FFF;
+  MaxCLArgs = $7FFF;
 
 type
   TCLWaitOnExit = (clAlwaysWait, clWaitOnError, clNeverWait);
@@ -18,35 +16,19 @@ type
   ECommandLine = class (Exception)
   end;
 
-    ECLTooFewArguments = class (ECommandLine)   // not used here; can be used in apps using this unit.
+    ECLTooFewArguments = class (ECommandLine)
     end;
 
-  TCLHasherClass = class of TCLHasher;
-  // inherit your own class to make faster hashing if necessary.
-  // For example, make true hasher, like Unicode version of THashedStringList in TIniFiles.
-  TCLHasher = class
-  public
-    constructor Create;
-    procedure Clear; virtual; abstract;
-    procedure BeginUpdate; virtual;
-    procedure EndUpdate; virtual;
+      ECLTooFewTaskArgs = class (ECLTooFewArguments)
+      public
+        Task: WideString;
+        Required: Integer;  // 1-based
+        constructor Create(const Task: WideString; Required: Integer);
+      end;
 
-    procedure Add(const Key, Value: WideString); virtual; abstract;
-    function IndexOfKey(const Key: WideString): Integer; virtual; abstract;  // -1 if not found.
-    function ValueByIndex(const Index: Integer): WideString; virtual; abstract;
-  end;
-
-  TCLBasicHasher = class (TCLHasher)
-  protected
-    FCount: Integer;
-    FEntries: array[0..MaxCLItemCount] of record
-      Key, Value: WideString;
-    end;
+  TCLHash = class (THash)
   public
-    procedure Clear; override;
-    procedure Add(const Key, Value: WideString); override;
-    function IndexOfKey(const Key: WideString): Integer; override;
-    function ValueByIndex(const Index: Integer): WideString; override;
+    constructor Create; override;
   end;
 
   TCLSplitter = class
@@ -68,23 +50,28 @@ type
   TCLParser = class
   protected
     FNotPassed: WideChar;
-    FOptions: TCLHasher;
+    FOptions: TCLHash;
+    FAliases: TCLHash;
     FArgCount: Integer;
-    FArguments: array[0..MaxCLItemCount] of WideString;
+    FArguments: array[0..MaxCLArgs] of WideString;
 
     function GetArgument(Index: Integer): WideString;
     function GetOption(Name: WideString): WideString;
 
-    procedure AppendFrom(const CLParser: TCLSplitter);
+    procedure AppendFrom(CLParser: TCLSplitter);
     procedure ParseItem(const Item: WideString; out ItemType: TCLItemType; out Key, Value: WideString);
     procedure AddShortOptions(const Key, Value: WideString);
     procedure AddLongOption(const Key, Value: WideString);
     procedure AddArgument(const Key, Value: WideString);
+    function GetAlias(Alias: WideString): WideString;
+    procedure SetAlias(Alias: WideString; const Value: WideString);
   public
     constructor Create; virtual;
-    constructor CreateWithCustomHasher(const HasherClass: TCLHasherClass); virtual;
-    procedure Clear;
     destructor Destroy; override;
+
+    procedure Clear;
+    procedure ClearAliases;
+    property Aliases[Alias: WideString]: WideString read GetAlias write SetAlias;
 
     procedure ParseCL; overload;
     procedure ParseCL(const CLString: WideString); overload;
@@ -94,16 +81,15 @@ type
     property Options[Name: WideString]: WideString read GetOption; default;
     property ArgCount: Integer read FArgCount;
     property Arguments[Index: Integer]: WideString read GetArgument;
-    function SwitchIsOn(Name: WideString): Boolean;
+    function IsSwitchOn(Name: WideString): Boolean;
     function GetArgByExt(const Extension: WideString): WideString;
-
-    function GetApplicationPath: WideString;  // = ParamStr(0) but in Unicode.
 
     class procedure RunTests;  // debug method.
   end;
 
   TCLApplicationLanguage = record
-    UnknownTask, Exception, FWaitOnExit: WideString;
+    UnknownTask, WaitOnExit: WideString;
+    Exception, FewTaskArgs: WideString;
   end;
 
   TCLApplication = class
@@ -112,10 +98,11 @@ type
     FWaitOnExit: TCLWaitOnExit;
 
     FLastProgress: String;
-    FProgressPrecision: Char;
+    FProgressPrecision: Byte;
 
+    FTaskAliases: TCLHash;
     FCLParser: TCLParser;
-    FRanOK: Boolean;
+    FExitCode: Integer;
 
     function IsConsoleHandle(Handle: DWord): Boolean;
       procedure WriteStringTo(Handle: DWord; const Str: WideString);
@@ -126,6 +113,8 @@ type
     procedure ConsoleWaitForEnter;
     procedure ConsoleGoUpOneLine;
 
+    function TryDoingTask(Task: WideString): Boolean; virtual;    // Task is not an alias
+    function DoStandardTask(Task: WideString): Boolean;           // Task is not an alias
     procedure UnknownTaskPassed(const Task: WideString);
     procedure BeforeExit; virtual;
 
@@ -135,8 +124,11 @@ type
     procedure ResetProgress;
     procedure UpdateProgress(Current, Max: DWord; Extra: WideString = '');
 
-    function GetProgressPrecision: Byte;
-    procedure SetProgressPrecision(const Value: Byte);
+    function GetRanOK: Boolean; virtual;
+    procedure SetRanOK(Value: Boolean); virtual;
+    procedure SetProgressPrecision(Value: Byte);
+    function GetTaskAlias(Alias: WideString): WideString;
+    procedure SetTaskAlias(ALias: WideString; const Value: WideString);
   public
     Name, Author: WideString;
     Version: Word;
@@ -148,90 +140,63 @@ type
 
     constructor Create; virtual;
     destructor Destroy; override;
+
     procedure SetDefaultLanguage;
     procedure Clear;
+    procedure SetDefaults; virtual; abstract;
 
-    property RanOK: Boolean read FRanOK;
+    property RanOK: Boolean read GetRanOK write SetRanOK default False;
+    property ExitCode: Integer read FExitCode write FExitCode default 1;
+    property TaskAliases[Alias: WideString]: WideString read GetTaskAlias write SetTaskAlias;
+    function TaskAliasIfAnyFor(const Task: WideString): WideString;
 
     property CommandLine: TCLParser read FCLParser;
     property EOLN: WideString read F_EOLN write F_EOLN;
-    property ProgressPrecision: Byte read GetProgressPrecision write SetProgressPrecision default 1;
+    property ProgressPrecision: Byte read FProgressPrecision write SetProgressPrecision default 1;
     property WaitOnExit: TCLWaitOnExit read FWaitOnExit write FWaitOnExit default clWaitOnError;
-    function IsNakedTask(const Task: WideString): Boolean; virtual;
+    function IsNakedTask(Task: WideString): Boolean; virtual;
 
     procedure Run; virtual;
     function GetCLString: WideString; virtual;
     procedure AcquireOptions; virtual;
-    function GetHeader: WideString;
+    procedure HandleException(E: Exception); virtual;
     procedure DoTask(Task: WideString); virtual;
-    function DoStandardTask(Task: WideString): Boolean;
+
+    function TaskArg(const Task: WideString; Index: Integer = 0): WideString;
+
     procedure OutputHeader;
+      function GetHeader: WideString; virtual;
     procedure OutputVersion;
-    procedure OutputHelp(const Detailed: Boolean = False);
+    procedure OutputHelp(Detailed: Boolean = False);
   end;
 
 implementation
 
-uses Math;
-
 var
   StdError, StdOut, StdIn: THandle;
 
-{ Common Unicode layer functions }
+{ Exceptions }
 
-function PosW(const Substr, Str: WideString; Start: Word = 1): Integer;
-var
-  I, Current: Integer;
+constructor ECLTooFewTaskArgs.Create(const Task: WideString; Required: Integer);
 begin
-  Current := 1;
-
-  if Substr <> '' then
-    for I := Max(1, Start) to Length(Str) do
-      if Substr[Current] <> Str[I] then
-        Current := 1
-        else
-          if Current >= Length(Substr) then
-          begin
-            Result := I - Current + 1;
-            Exit
-          end
-          else
-            Inc(Current);
-
-  Result := 0
+  Self.Task := Task;
+  Self.Required := Required;
 end;
 
-function ExtractFileExt(FileName: WideString): WideString;
-var
-  I: Word;
-begin
-  for I := Length(FileName) downto 1 do
-    if FileName[I] = '\' then
-      Break
-      else if FileName[I] = '.' then
-      begin
-        Result := Copy(FileName, I, Length(FileName));
-        Exit
-      end;
+{ TCLHash }
 
-  Result := ''
+constructor TCLHash.Create;
+begin
+  inherited;
+  NameValueSeparator := #0;
 end;
 
 { TCLParser }
 
 constructor TCLParser.Create;
 begin
-  CreateWithCustomHasher( TCLBasicHasher );
-end;
-
-constructor TCLParser.CreateWithCustomHasher(const HasherClass: TCLHasherClass);
-begin
-  try
-    FOptions := HasherClass.Create;
-  except
-    CreateWithCustomHasher( TCLBasicHasher );
-    raise ECommandLine.CreateFmt('Exception occured during the creation of hasher class %s.', [HasherClass.ClassName]);
-  end;
+  FOptions := TCLHash.Create;
+  FAliases := TCLHash.Create;
 
   FNotPassed := #0;
   Clear;
@@ -241,10 +206,17 @@ procedure TCLParser.Clear;
 begin
   FOptions.Clear;
   FArgCount := 0;
+  ClearAliases;
+end;
+
+procedure TCLParser.CLearAliases;
+begin
+  FAliases.Clear;
 end;
 
 destructor TCLParser.Destroy;
 begin
+  FAliases.Free;
   FOptions.Free;
   inherited;
 end;
@@ -253,11 +225,18 @@ function TCLParser.GetOption(Name: WideString): WideString;
 var
   Index: Integer;
 begin
-  Index := FOptions.IndexOfKey(Name);
-  if Index = -1 then
-    Result := FNotPassed
-    else
-      Result := FOptions.ValueByIndex(Index);
+  Result := FNotPassed;
+
+  Index := FOptions.IndexOfName(Name);
+  if Index <> -1 then
+    Result := FOptions.ValueFromIndex[Index];
+
+  if Result = FNotPassed then
+  begin
+    Index := FAliases.IndexOfName(Name);
+    if Index <> -1 then
+      Result := Options[FAliases.ValueFromIndex[Index]];
+  end;
 end;
 
 function TCLParser.GetArgument(Index: Integer): WideString;
@@ -289,7 +268,7 @@ begin
   end;
 end;
 
-procedure TCLParser.AppendFrom(const CLParser: TCLSplitter);
+procedure TCLParser.AppendFrom(CLParser: TCLSplitter);
 var
   ItemType: TCLItemType;
   Key, Value: WideString;
@@ -352,24 +331,16 @@ end;
 
 procedure TCLParser.AddLongOption(const Key, Value: WideString);
 begin
-  FOptions.Add(Key, Value);
+  FOptions.Add(Key + FOptions.NameValueSeparator + Value);
 end;
 
 procedure TCLParser.AddArgument(const Key, Value: WideString);
 begin
   if FArgCount >= Length(FArguments) then
-    raise ECommandLine.CreateFmt('%s: max count of arguments (%d) reached.', [ClassName, Length(FArguments)]);
+    raise ECommandLine.CreateFmt('%s: max number of arguments (%d) reached.', [ClassName, Length(FArguments)]);
 
   FArguments[FArgCount] := Value;
   Inc(FArgCount);
-end;
-
-function TCLParser.GetApplicationPath: WideString;
-const
-  MaxPathLength = $7FFF;
-begin
-  SetLength(Result, MaxPathLength * 2);
-  SetLength(Result, GetModuleFileNameW(0, @Result[1], MaxPathLength));
 end;
 
 function TCLParser.GetArgByExt(const Extension: WideString): WideString;
@@ -386,10 +357,21 @@ begin
   Result := '';
 end;
 
-function TCLParser.SwitchIsOn(Name: WideString): Boolean;
+function TCLParser.IsSwitchOn(Name: WideString): Boolean;
 begin
   Name := LowerCase( Options[Name] );
-  Result := (Name <> FNotPassed) and (Name <> '0') and (Name <> 'false');
+  Result := (Name <> FNotPassed) and (Name <> '0') and (Name <> 'false') and
+            (Name <> 'off') and (Name <> 'no');
+end;
+
+function TCLParser.GetAlias(Alias: WideString): WideString;
+begin
+  Result := FAliases.Values[Alias];
+end;
+
+procedure TCLParser.SetAlias(ALias: WideString; const Value: WideString);
+begin
+  FAliases.Values[Alias] := Value;
 end;
 
 { TCLSplitter }
@@ -451,7 +433,7 @@ end;
 { Debug }
 
 class procedure TCLParser.RunTests;
-  procedure Assert(const Condition: Boolean);
+  procedure Assert(Condition: Boolean);
   begin
     if not Condition then
       raise EAssertionFailed.Create('');
@@ -520,75 +502,27 @@ begin
   end;
 end;
 
-{ TCLHasher }
-
-constructor TCLHasher.Create;
-begin
-  Clear;
-end;
-
-procedure TCLHasher.BeginUpdate;
-begin
-end;
-
-procedure TCLHasher.EndUpdate;
-begin
-end;
-
-{ TCLBasicHasher }
-
-procedure TCLBasicHasher.Add(const Key, Value: WideString);
-begin
-  inherited;
-
-  if FCount >= Length(FEntries) then
-    raise ECommandLine.CreateFmt('%s: max count of entries (%d) reached.', [ClassName, Length(FEntries)]);
-
-  FEntries[FCount].Key := Key;
-  FEntries[FCount].Value := Value;
-  Inc(FCount);
-end;
-
-procedure TCLBasicHasher.Clear;
-begin
-  inherited;
-  FCount := 0;
-end;
-
-function TCLBasicHasher.IndexOfKey(const Key: WideString): Integer;
-begin
-  for Result := 0 to FCount - 1 do
-    if FEntries[Result].Key = Key then
-      Exit;
-
-  Result := -1;
-end;
-
-function TCLBasicHasher.ValueByIndex(const Index: Integer): WideString;
-begin
-  if (Index < 0) or (Index >= FCount) then
-    raise ECommandLine.CreateFmt('%s: invalid index %d.', [ClassName, Index]);
-
-  Result := FEntries[Index].Value;
-end;
-
 { TCLApplication }
 
 constructor TCLApplication.Create;
 begin
   F_EOLN := #13#10;
-  FProgressPrecision := '1';
+  FProgressPrecision := 1;
   FWaitOnExit := clWaitOnError;
+  FTaskAliases := TCLHash.Create;
   FCLParser := TCLParser.Create;
-  FRanOK := False;
+  RanOK := False;
 
   SetDefaultLanguage;
   Clear;
+
+  SetDefaults;
 end;
 
 destructor TCLApplication.Destroy;
 begin
   FCLParser.Free;
+  FTaskAliases.Free;
   inherited;
 end;
 
@@ -597,7 +531,8 @@ begin
   Language.UnknownTask := 'Unknown task "%s" specified.';
   Language.Exception := StringOfChar('-', 80) +
                         '  Oops! Some <%s> exception has occured. Here''s what it says:' + F_EOLN + '%s';
-  Language.FWaitOnExit := '______________________' + F_EOLN +
+  Language.FewTaskArgs := 'Argument #%d is required for task "%s".';
+  Language.WaitOnExit := '______________________' + F_EOLN +
                           'Press Enter to exit...';
 end;
 
@@ -613,6 +548,7 @@ begin
   Help := '';
   HelpDetails := '';
 
+  FTaskAliases.Clear;
   FCLParser.Clear;
   ResetProgress;
 end;
@@ -665,9 +601,14 @@ begin
                                      StrToInt(Copy(StrDate, 1, 2)))); {day}
 end;
 
+function TCLApplication.TryDoingTask(Task: WideString): Boolean;
+begin
+  Result := DoStandardTask(Task);
+end;
+
 function TCLApplication.DoStandardTask(Task: WideString): Boolean;
 begin
-  Task := LowerCase(Task);  // loosing Unicode isn't a problem here; standard task names are ANSI.
+  Task := LowerCase(Task);
   Result := True;
 
   if Task = FCLParser.NotPassed then
@@ -680,10 +621,10 @@ begin
           Result := False;
 end;
 
-procedure TCLApplication.OutputHelp(const Detailed: Boolean = False);
+procedure TCLApplication.OutputHelp(Detailed: Boolean = False);
 begin
   ConsoleWrite(Help);
-  FRanOK := False;
+  RanOK := False;
 
   if Detailed then
   begin
@@ -763,7 +704,8 @@ procedure TCLApplication.UpdateProgress(Current, Max: DWord; Extra: WideString =
 var
   Str: WideString;
 begin
-  Str := Format( '  [ %.' + FProgressPrecision + 'f%% ]... ', [Current / Max * 100] ) + Extra;
+  Str := Format( '  [ %.' + IntToStr(FProgressPrecision) + 'f%% ]... ',
+                [Current / Max * 100] ) + Extra;
   if Str <> FLastProgress then
   begin
     if FLastProgress <> '' then
@@ -772,16 +714,6 @@ begin
     ConsoleWriteLn(Str);
     FLastProgress := Str;
   end;
-end;
-
-function TCLApplication.GetProgressPrecision: Byte;
-begin
-  Result := StrToInt(FProgressPrecision);
-end;
-
-procedure TCLApplication.SetProgressPrecision(const Value: Byte);
-begin
-  FProgressPrecision := IntToStr( Min(9, Value) )[1];
 end;
 
 procedure TCLApplication.ConsoleGoUpOneLine;
@@ -793,11 +725,16 @@ begin
   end;
 end;
 
+procedure TCLApplication.SetProgressPrecision(Value: Byte);
+begin
+  FProgressPrecision := Min(9, Value);
+end;
+
 procedure TCLApplication.Run;
 var
   Task: WideString;
 begin
-  FRanOK := True;  // note that tasks in DoTask may also set this.
+  RanOK := True;  // note that tasks in TryDoingTask may also set this.
 
   try
     FCLParser.ParseCL( GetCLString );
@@ -817,12 +754,24 @@ begin
   except
     on E: Exception do
     begin
-      FRanOK := False;
-      ConsoleWrite( WideFormat(Language.Exception, [E.ClassName, E.Message]) );
+      RanOK := False;
+      HandleException(E);
     end;
   end;
 
   BeforeExit;
+end;
+
+procedure TCLApplication.HandleException(E: Exception);
+var
+  Msg: WideString;
+begin
+  if E.InheritsFrom(ECLTooFewTaskArgs) then
+    Msg := WideFormat(Language.FewTaskArgs, [ECLTooFewTaskArgs(E).Task, ECLTooFewTaskArgs(E).Required + 1])
+    else
+      Msg := WideFormat(Language.Exception, [E.ClassName, E.Message]);
+
+  ConsoleWrite(Msg);
 end;
 
 function TCLApplication.GetCLString: WideString;
@@ -832,23 +781,27 @@ end;
 
 procedure TCLApplication.AcquireOptions;
 begin
-  if FCLParser.SwitchIsOn('no-wait') then
+  if FCLParser.IsSwitchOn('no-wait') then
     FWaitOnExit := clNeverWait
-    else if FCLParser.SwitchIsOn('wait') then
+    else if FCLParser.IsSwitchOn('wait') then
       FWaitOnExit := clAlwaysWait
-      else if FCLParser.SwitchIsOn('wait-on-error') then
+      else if FCLParser.IsSwitchOn('wait-on-error') then
         FWaitOnExit := clWaitOnError;
 end;
 
 // recall naked C functions and the name probably won't seem strange to you...
-function TCLApplication.IsNakedTask(const Task: WideString): Boolean;
+// naked tasks have no header output and never wait for Enter after they end.
+function TCLApplication.IsNakedTask(Task: WideString): Boolean;
 begin
+  Task := TaskAliasIfAnyFor(Task);
   Result := LowerCase(Task) = 'v';
 end;
 
 procedure TCLApplication.DoTask(Task: WideString);
 begin
-  if not DoStandardTask(Task) then
+  Task := TaskAliasIfAnyFor(Task);
+
+  if not TryDoingTask(Task) then
     UnknownTaskPassed(Task);
 end;
 
@@ -861,24 +814,63 @@ end;
 
 procedure TCLApplication.BeforeExit;
 begin
-  if ((FWaitOnExit = clAlwaysWait) or ((FWaitOnExit = clWaitOnError) and not FRanOK)) and IsConsolehandle(StdOut) then
+  if ((FWaitOnExit = clAlwaysWait) or ((FWaitOnExit = clWaitOnError) and not RanOK)) and IsConsolehandle(StdOut) then
   begin
     ConsoleWriteLn;
     ConsoleWriteLn;
-    ConsoleWrite(Language.FWaitOnExit);
+    ConsoleWrite(Language.WaitOnExit);
     ConsoleWaitForEnter;
   end;
 end;
 
 procedure TCLApplication.OutputVersion;
 begin
-  ConsoleWrite(Name);
-  ConsoleWrite('  v');
-
+  ConsoleWrite(Name + '  v');
   if Version = 0 then
     ConsoleWrite( FormatDate )
     else
       ConsoleWrite( FormatVersion );
+end;
+
+function TCLApplication.GetTaskAlias(Alias: WideString): WideString;
+begin
+  Result := FTaskAliases.Values[Alias];
+end;
+
+procedure TCLApplication.SetTaskAlias(ALias: WideString; const Value: WideString);
+begin
+  FTaskAliases.Values[Alias] := Value;
+end;
+
+function TCLApplication.TaskAliasIfAnyFor(const Task: WideString): WideString;
+var
+  Real: WideString;
+begin
+  Real := TaskAliases[Task];
+  if Real = '' then
+    Result := Task
+    else
+      Result := Real;
+end;
+
+function TCLApplication.GetRanOK: Boolean;
+begin
+  Result := FExitCode = 0;
+end;
+
+procedure TCLApplication.SetRanOK(Value: Boolean);
+begin
+  if Value then
+    FExitCode := 0
+    else
+      FExitCode := 1;
+end;
+
+function TCLApplication.TaskArg(const Task: WideString; Index: Integer): WideString;
+begin
+  Result := FCLParser.Arguments[Index];
+  if Result = FCLParser.NotPassed then
+    raise ECLTooFewTaskArgs.Create(Task, Index);
 end;
 
 initialization

@@ -12,7 +12,7 @@ unit SQLite;
 
 interface
 
-uses Classes, Contnrs, SysUtils, Windows, StringsW, FileStreamW, Utils;       
+uses Classes, Contnrs, SysUtils, Windows, StringsW, FileStreamW, Utils;
 
 const
   { Result codes: }
@@ -190,6 +190,7 @@ type
 
   TSQLiteType = (sqInteger, sqFloat, sqText, sqBlob, sqNull);
   TSQLiteAction = (sqInsert, sqDelete, sqUpdate);
+  TSQLiteTransactionType = (trNormal, trDeferred, trImmediate, trExclusive);
 
   TSQLiteDatabase = class;
   TSQLiteTable = class;
@@ -203,7 +204,7 @@ type
   TSQLiteProgressCallback = function (Data: Pointer): Boolean cdecl;
   TSQLiteProgressEvent = function (DB: TSQLiteDatabase): Boolean of object;
 
-  { Return True to try again or False to terminate the operation with SQLITE_BUSY or SQLITE_IOERR_BLOCKED. }  
+  { Return True to try again or False to terminate the operation with SQLITE_BUSY or SQLITE_IOERR_BLOCKED. }
   TSQLiteBusyCallback = function (Data: Pointer; TryCount: Integer): Boolean cdecl;
   TSQLiteBusyEvent = function (DB: TSQLiteDatabase; TryCount: Integer): Boolean of object;
 
@@ -284,7 +285,7 @@ type
       public
         OldSize, NewSize: Integer;
         constructor Create(OldSize, NewSize: Integer);
-      end;                       
+      end;
 
       ESQLiteBlobOperation = class (ESQLiteBlob)
       public
@@ -342,6 +343,21 @@ type
         constructor Create(Code: Integer; const Param: WideString); overload;
       end;
 
+        ESQLiteEmptyBindParam = class (ESQLiteBind)
+        public
+          ParamName: WideString;
+          constructor Create(const Param: WideString);
+        end;
+
+        ESQLiteUnsupportedBindArg = class (ESQLiteBind)
+        public
+          ParamName: WideString;
+          ParamIndex, VType: Integer;
+
+          constructor Create(Param: WideString; VType: Integer); overload;
+          constructor Create(Param, VType: Integer); overload;
+        end;
+
       ESQLiteResultToRecord = class (ESQLiteQuery)
       public
         constructor Create(Reason: WideString);
@@ -352,7 +368,7 @@ type
     Name, Origin: WideString;
     // column declaration type: http://www.sqlite.org/c3ref/column_decltype.html
     DeclType: WideString;
-    
+
     BLOB: String;
     Text: WideString;
 
@@ -370,6 +386,39 @@ type
 
   TSQLiteObject = class (TObject);
 
+  TSQLite = class
+  public
+    class function Version: WideString;
+    class function VersionNum: Integer;
+    class function SourceID: WideString;
+
+    class function Quote(const Str: WideString): WideString;
+    class function QuoteWrapping(const Str: WideString): WideString;
+    // if Str = '' returns "NULL", otherwise works as QuoteWrapping.
+    class function QuoteOrNull(const Str: WideString): WideString;
+
+    class function IsThreadSafe: Boolean;
+    class function HasCompileOption(const Name: WideString): Boolean;
+    class function CompileOptions(WithPrefix: Boolean = False): TStrings;
+
+    class function Random(Size: Integer): TMemoryStream;
+    // attempts to free non-essential memory and returns the amount that was actually freed;
+    // works only if SQLITE_ENABLE_MEMORY_MANAGEMENT was enabled on compile-time.
+    class function ReleaseMemory(Amount: Integer): Integer;
+    class function SoftHeapLimit(NewLimit: Int64 = -1): Int64;    // returns old limit.
+
+    class function Error(Err: Integer): WideString;
+    class function Printf(Format: WideString; const Args: array of const): WideString;
+
+    class function MemoryPeak(Reset: Boolean = False): Int64;
+    class function MemoryUsed: Int64;
+
+    // Op - one of SQLITE_STATUS_* consts; returns SQLITE_OK on success or an error code
+    // on failure (Current and Peak are set to 0).
+    class function Status(Op: Integer; out Current, Peak: Integer; Reset: Boolean = False): Integer;
+    class function StrIComp(const S1, S2: WideString): Integer;
+  end;
+
   TSQLiteDatabase = class (TSQLiteObject)
   protected
     FOpenFileName, FOpenVFS: WideString;
@@ -379,6 +428,7 @@ type
     FHandle: Pointer;
     FTables: TObjectHash;         // cached TSQLiteTable objects (tables don't have to exist)
     FQueries: TSQLiteObjectList;  // of TSQLiteQuery
+    FTransactionNesting: Integer;
 
     FOnProgress: TSQLiteProgressEvent;
     FOnProgressOpCodeCount: Integer;
@@ -387,8 +437,6 @@ type
     FOnCommit: TSQLiteCommitEvent;
     FOnRollback: TSQLiteRollbackEvent;
     FOnUpdate: TSQLiteUpdateEvent;
-
-    class function GetTempFileName: WideString;
 
     constructor CreateCustom(Stream: TStream; Flags: Integer); overload;
 
@@ -401,23 +449,22 @@ type
     procedure SetLimit(Op: Integer; Value: Integer);
     function GetForeignKeys: Boolean;
     procedure SetForeignKeys(const Value: Boolean);
-    
-    procedure SetOnProgress(Value: TSQLiteProgressEvent);        
-    procedure SetOnProgressOpCodeCount(const Value: Integer);    
+
+    procedure SetOnProgress(Value: TSQLiteProgressEvent);
+    procedure SetOnProgressOpCodeCount(const Value: Integer);
     procedure SetOnBusy(const Value: TSQLiteBusyEvent);
     procedure SetBusyTimeout(Value: Integer);
     procedure SetOnCommit(Value: TSQLiteCommitEvent);
     procedure SetOnRollback(Value: TSQLiteRollbackEvent);
     procedure SetOnUpdate(Value: TSQLiteUpdateEvent);
   public
-    class function LibVersion: WideString;
-    class function LibVersionNum: Integer;
-    class function SourceID: WideString;
-    
+    { delegates to TSQLite; useful to call on a created DB object and thus avoid
+      references to TSQLite in code that might be database-abstracted. }
     class function Quote(const Str: WideString): WideString;
     class function QuoteWrapping(const Str: WideString): WideString;
-    // if Str = '' returns "NULL", otherwise works as QuoteWrapping.
     class function QuoteOrNull(const Str: WideString): WideString;
+
+    class function GetTempFileName: WideString; virtual;
 
     constructor Create(const FN: WideString);   // opens FN if exists or creates it
     constructor New(const FN: WideString);      // fails if FN exists
@@ -434,6 +481,11 @@ type
     constructor Acquire(Handle: Pointer);
     destructor Destroy; override;
 
+    property FileName: WideString read FOpenFileName;
+    property OpenVFS: WideString read FOpenVFS;
+    property OpenFlags: Integer read FOpenFlags;
+    property DeleteOnClose: Boolean read FDeleteOnClose write FDeleteOnClose;
+
     property Handle: Pointer read FHandle;
     // don't free table objects.
     property Tables[Name: WideString]: TSQLiteTable read GetTable; default;
@@ -444,8 +496,18 @@ type
     function LastChanged: Integer;
     procedure Interrupt;                  // cancels any pending database operations.
     function IsAutocommitting: Boolean;   // returns False if inside a transaction.
-    // usually False by default; attempt to set ForeignKeys while in transaction causes an error. 
+    // usually False by default; attempt to set ForeignKeys while in transaction causes an error.
     property ForeignKeys: Boolean read GetForeignKeys write SetForeignKeys;
+
+    procedure BeginTransaction(Kind: TSQLiteTransactionType = trNormal);
+    procedure Commit;
+    procedure Rollback;
+    { The following only work when transaction is operated through calls to 3 methods above
+      instead of doing this directly through Execute or similar. }
+    property TransactionNesting: Integer read FTransactionNesting;
+    function InTransaction: Boolean;
+    function BeginNestedTransaction(Kind: TSQLiteTransactionType = trNormal): Boolean;
+    function CommitNested: Boolean;       // True if there was no nesting and commit was performed.
 
     function LastError: Integer;
     function LastErrorExt: Integer;       // one of extended error codes.
@@ -453,12 +515,13 @@ type
 
     // returned objects can be freed by caller using Free; others are freed automatically
     // when the database object is destroyed.
-    function NewQuery(const SQL: WideString): TSQLiteQuery;
+    function NewQuery(const SQL: WideString; Bind: array of const): TSQLiteQuery;
     // returns TSQLiteEmptyResult (NilIfNone = False) or NIL if there were no rows in the result set.
-    function QueryResult(const SQL: WideString; NilIfNone: Boolean = False): TSQLiteResult;
+    function QueryResult(const SQL: WideString; Bind: array of const;
+      NilIfNone: Boolean = False): TSQLiteResult;
     // the same as NewQuery but doesn't return an object; instead returns the sum of
     // LastChanged for all queries inside SQL (";"-separated).
-    function Execute(const SQL: WideString): Integer;
+    function Execute(const SQL: WideString; Bind: array of const): Integer;
 
     property OnProgress: TSQLiteProgressEvent read FOnProgress write SetOnProgress;
     property OnProgressOpCodeCount: Integer read FOnProgressOpCodeCount write SetOnProgressOpCodeCount default 30;
@@ -467,7 +530,7 @@ type
     // overrides OnBusy handler; sets a period during which the DB will attempt to access
     // the locked resource before returning with an error.
     // Milliseconds; set to 0 or below to disable and use OnBusy (if it's assigned).
-    property BusyTimeout: Integer read FBusyTimeout write SetBusyTimeout;   
+    property BusyTimeout: Integer read FBusyTimeout write SetBusyTimeout;
     property OnCommit: TSQLiteCommitEvent read FOnCommit write SetOnCommit;
     property OnRollback: TSQLiteRollbackEvent read FOnRollback write SetOnRollback;
     property OnUpdate: TSQLiteUpdateEvent read FOnUpdate write SetOnUpdate;
@@ -492,6 +555,8 @@ type
     destructor Destroy; override;
 
     property Name: WIdeString read FName;
+    function QueryCount(Where: WideString = ''): Int64; overload;
+    function QueryCount(Where: WideString; Bind: array of const): Int64; overload;
 
     // DB can be 'main', 'temp' or a name of an ATTACH'ed database.
     function OpenBlob(Field: WideString; RowID: Int64; ReadOnly: Boolean = False;
@@ -505,7 +570,7 @@ type
 
     FHandle: Pointer;
 
-    // query objects are created by TSQLiteDatabase.NewQuery.    
+    // query objects are created by TSQLiteDatabase.NewQuery.
     constructor Create(const SQL: WideString; DB: TSQLiteDatabase);
 
     // caller must sqlite3_finalize(Result) on its own after it's done with the statement.
@@ -519,12 +584,19 @@ type
 
     // returns True if current query doesn't change the database directly: http://www.sqlite.org/c3ref/stmt_readonly.html
     function IsReadOnly: Boolean;
-                    
+    // Op - one of SQLITE_STATUS_* consts.
+    function Status(Op: Integer; Reset: Boolean = False): Integer;
+
     // might be useless since query is only ran by Run which passes the handler to
     // TSQLiteResult so its Reset can only be used.
     procedure Reset;
     procedure ClearBindings;
 
+    // Bind = [ [<name,] <value>, [<name>,] <value> ]; <name> - String starting with ":" or "?";
+    // if <value> has no leading <name> parameter index is used (total count of preceding <value>s)
+    // if <name> starts with "?" an error is raised if value with given name doesn't exist
+    // <value> can be Integer, Double/Extended, Char/WideString (BindTextTo) or String (BindBlobTo).
+    procedure Bind(Values: array of const);
     procedure CheckBindRes(const Param: WideString; Status: Integer); overload;
     procedure CheckBindRes(Param: Integer; Status: Integer); overload;
 
@@ -551,7 +623,7 @@ type
     // parameter indexes are 1-based in SQLite; 0 means "no such param".
     function ParamIndex(const Param: WideString): Integer;
     function ParamName(Index: Integer): WideString;   // returns '' on error.
-    function HasParam(const Param: WideString): Boolean; overload;           
+    function HasParam(const Param: WideString): Boolean; overload;
     function HasParam(Param: Integer): Boolean; overload;
     function ParamCount: Integer;
 
@@ -586,6 +658,8 @@ type
     function Column(Index: Integer): TSQLiteColumn; overload;
     function Column(const Name: WideString): TSQLiteColumn; overload;
 
+    function RowCount: Integer;   // this will call Reset, iterate through all rows and Reset again.
+
     function Next: Boolean;
     // is set to False once Next returns False; Reset can be used to rewind the result set at any point.
     property HasAny: Boolean read FHasAny;
@@ -593,9 +667,10 @@ type
 
     // Fields = [item[, item[, ...]]
     //   when item is String <col> or <col> followed by Integer Size:
-    //     <col> = Integer (col index) or String/PChar (col name); Size = field size
-    //     (4 if omitted) - useful for Double/Int64 (but would work for other types as well).
-    //   when item is Double Skip - specifies the number of bytes to skip (do not fill)
+    //     <col> = Integer (col index) or String/PChar (col name); Size = forced field size
+    //     (optional for integer/double fields, defaults to 4; strings must not have this specified)
+    //     You can retrieve 64-bit integers by setting Size to 5 or above.
+    //   when item is Double (e.g. 3.0) - specifies the number of bytes to skip (do not fill)
     //     Note that this must be Double, not Integer, to avoid confusion with Size (above).
     // sqText items are WideString fields while sqBlob items are String.
     // Fields must end on a @Var item. Returns the number of bytes that were written to Rec.
@@ -624,16 +699,16 @@ type
     FColumn: WideString;
     FRowID: Int64;
     FIsReadOnly: Boolean;
-    
+
     function GetSize: Int64; override;
     procedure SetSize(NewSize: LongInt); override;
   public
     constructor Acquire(Handle: Pointer);
-    destructor Destroy; override;          
+    destructor Destroy; override;
 
     procedure Reopen(RowID: Int64);
     procedure Check(Operation: String; Status: Integer);
-                         
+
     property Database: TSQLiteDatabase read FDatabase;
     property Table: TSQLiteTable read FTable;
     property Column: WideString read FColumn;
@@ -648,114 +723,124 @@ type
 const
   SQLiteDLL = 'sqlite3.dll';
 
-procedure sqlite3_free(p: Pointer); cdecl; external SQLiteDLL;
-function sqlite3_clear_bindings(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_sleep(ms: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_get_table(DB: Pointer; SQL: PChar; out resultp: PCharArray; out nrow: Integer; out column: Integer; out ErrMsg: PChar): Integer; cdecl; external SQLiteDLL;
-procedure sqlite3_free_table(var resultp: PCharArray); cdecl; external SQLiteDLL;
-function sqlite3_prepare(DB: Pointer; SQL: PChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PChar): Integer; cdecl; external SQLiteDLL;
-function sqlite3_prepare16(DB: Pointer; SQL: PWideChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PWideChar): Integer; cdecl; external SQLiteDLL;
-function sqlite3_prepare_v2(DB: Pointer; SQL: PChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PChar): Integer; cdecl; external SQLiteDLL;
-function sqlite3_prepare16_v2(DB: Pointer; SQL: PWideChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PWideChar): Integer; cdecl; external SQLiteDLL;
-function sqlite3_libversion: PChar; cdecl; external SQLiteDLL;
-function sqlite3_libversion_number: Integer; cdecl; external SQLiteDLL;
-function sqlite3_sourceid: PChar; cdecl; external SQLiteDLL;
-function sqlite3_last_insert_rowid(DB: Pointer): Int64; cdecl; external SQLiteDLL;
-function sqlite3_changes(DB: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_total_changes(DB: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_close(DB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_aggregate_context(Context: Pointer; nBytes: Integer): Pointer; cdecl; external SQLiteDLL;
+function sqlite3_aggregate_count(Context: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_blob(pStmt: Pointer; ParamIdx: Integer; const Data; nData: Integer; xDel: TSQLiteBDestructor): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_double(pStmt: Pointer; ParamIdx: Integer; Data: Double): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_int(pStmt: Pointer; ParamIdx: Integer; Data: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_int64(pStmt: Pointer; ParamIdx: Integer; Data: Int64): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_null(pStmt: Pointer; ParamIdx: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_parameter_count(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_parameter_index(pStmt: Pointer; zName: PChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_parameter_name(pStmt: Pointer; n: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_bind_text(pStmt: Pointer; ParamIdx: Integer; Data: PChar; nData: Integer; xDel: TSQLiteBDestructor): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_text16(pStmt: Pointer; ParamIdx: Integer; Data: PWideChar; nData: Integer; xDel: TSQLiteBDestructor): Integer; cdecl; external SQLiteDLL;
+function sqlite3_bind_zeroblob(pStmt: Pointer; ParamIdx: Integer; nData: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_blob_bytes(Blog: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_blob_close(Blog: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_blob_open(DB: Pointer; zDB, zTable, zColumn: PChar; RowID: Int64; Flags: Integer; out Blog: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_blob_read(Blog: Pointer; var Buf; Size, FromOffset: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_blob_reopen(Blog: Pointer; RowID: Int64): Integer; cdecl; external SQLiteDLL;
+function sqlite3_blob_write(Blog: Pointer; const Buf; Size, AtOffset: Integer): Integer; cdecl; external SQLiteDLL;
 function sqlite3_busy_timeout(DB: Pointer; ms: Integer): Integer; cdecl; external SQLiteDLL;
-procedure sqlite3_interrupt(DB: Pointer); cdecl; external SQLiteDLL;
-function sqlite3_errmsg(DB: Pointer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_errmsg16(DB: Pointer): PWideChar; cdecl; external SQLiteDLL;
-function sqlite3_errcode(DB: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_extended_errcode(DB: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_open(FileName: PChar; out ppDB: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_open16(FileName: PWideChar; out ppDB: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_open_v2(FileName: PChar; out ppDB: Pointer; flags: Integer; zVfs: PChar): Integer; cdecl; external SQLiteDLL;
-function sqlite3_finalize(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_reset(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_global_recover: Integer; cdecl; external SQLiteDLL;
-function sqlite3_get_autocommit(DB: Pointer): Boolean; cdecl; external SQLiteDLL;
+function sqlite3_changes(DB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_clear_bindings(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_close(DB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_column_blob(pStmt: Pointer; iCol: Integer): Pointer; cdecl; external SQLiteDLL;
+function sqlite3_column_bytes(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_column_bytes16(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_column_count(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_column_database_name(pStmt: Pointer; N: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_column_database_name16(pStmt: Pointer; N: Integer): PWideChar; cdecl; external SQLiteDLL;
+function sqlite3_column_decltype(pStmt: Pointer; i: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_column_decltype16(pStmt: Pointer; i: Integer): PWideChar; cdecl; external SQLiteDLL;
+function sqlite3_column_double(pStmt: Pointer; iCol: Integer): Double; cdecl; external SQLiteDLL;
+function sqlite3_column_int(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_column_int64(pStmt: Pointer; iCol: Integer): Int64; cdecl; external SQLiteDLL;
+function sqlite3_column_name(pStmt: Pointer; n: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_column_name16(pStmt: Pointer; n: Integer): PWideChar; cdecl; external SQLiteDLL;
+function sqlite3_column_origin_name(pStmt: Pointer; N: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_column_origin_name16(pStmt: Pointer; N: Integer): PWideChar; cdecl; external SQLiteDLL;
+function sqlite3_column_table_name(pStmt: Pointer; N: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_column_table_name16(pStmt: Pointer; N: Integer): PWideChar; cdecl; external SQLiteDLL;
+function sqlite3_column_text(pStmt: Pointer; iCol: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_column_text16(pStmt: Pointer; iCol: Integer): PWideChar; cdecl; external SQLiteDLL;
+function sqlite3_column_type(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_commit_hook(DB: Pointer; Callback: TSQLiteCommitCallback; Data: Pointer): TSQLiteCommitCallback; cdecl; external SQLiteDLL;
+function sqlite3_compileoption_get(N: Integer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_compileoption_used(zOptName: PChar): Boolean; cdecl; external SQLiteDLL;
 function sqlite3_complete(SQL: PChar): Integer; cdecl; external SQLiteDLL;
 function sqlite3_complete16(SQL: PWideChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_data_count(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_db_handle(pStmt: Pointer): Pointer; cdecl; external SQLiteDLL;
+function sqlite3_db_status(DB: Pointer; Op: Integer; pCurrent, pHighwater: PInteger; resetFlag: Boolean): Integer; cdecl; external SQLiteDLL;
+function sqlite3_enable_load_extension(DB: Pointer; OnOff: Boolean): Integer; cdecl; external SQLiteDLL;
+function sqlite3_enable_shared_cache(OnOff: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_errcode(DB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_errmsg(DB: Pointer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_errmsg16(DB: Pointer): PWideChar; cdecl; external SQLiteDLL;
 function sqlite3_exec(DB: Pointer; SQLStatement: PChar; Callback: Pointer; UserData: Pointer; out ErrMsg: PChar): Integer; cdecl; external SQLiteDLL;
 function sqlite3_expired(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_extended_errcode(DB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_extended_result_codes(DB: Pointer; OnOff: Boolean): Integer; cdecl; external SQLiteDLL;
+function sqlite3_finalize(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_get_autocommit(DB: Pointer): Boolean; cdecl; external SQLiteDLL;
+function sqlite3_get_table(DB: Pointer; SQL: PChar; out resultp: PCharArray; out nrow: Integer; out column: Integer; out ErrMsg: PChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_global_recover: Integer; cdecl; external SQLiteDLL;
+function sqlite3_last_insert_rowid(DB: Pointer): Int64; cdecl; external SQLiteDLL;
+function sqlite3_libversion: PChar; cdecl; external SQLiteDLL;
+function sqlite3_libversion_number: Integer; cdecl; external SQLiteDLL;
+function sqlite3_limit(DB: Pointer; Op: Integer; NewValue: Integer = -1): Integer; cdecl; external SQLiteDLL;
+function sqlite3_load_extension(DB: Pointer; zFile: PChar; zProc: PChar = NIL; pzErrMsg: PPChar = NIL): Integer; cdecl; external SQLiteDLL;
+function sqlite3_malloc(Size: Integer): Pointer; cdecl; external SQLiteDLL;
+function sqlite3_memory_highwater(resetFlag: Boolean): Int64; cdecl; external SQLiteDLL;
+function sqlite3_memory_used: Int64; cdecl; external SQLiteDLL;
+function sqlite3_open(FileName: PChar; out ppDB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_open_v2(FileName: PChar; out ppDB: Pointer; flags: Integer; zVfs: PChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_open16(FileName: PWideChar; out ppDB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_prepare(DB: Pointer; SQL: PChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_prepare_v2(DB: Pointer; SQL: PChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_prepare16(DB: Pointer; SQL: PWideChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PWideChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_prepare16_v2(DB: Pointer; SQL: PWideChar; nBytes: Integer; out ppStmt: Pointer; out pzTail: PWideChar): Integer; cdecl; external SQLiteDLL;
+function sqlite3_realloc(Buf: Pointer; Size: Integer): Pointer; cdecl; external SQLiteDLL;
+function sqlite3_release_memory(Amount: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_reset(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_rollback_hook(DB: Pointer; Callback: TSQLiteRollbackCallback; Data: Pointer): TSQLiteRollbackCallback; cdecl; external SQLiteDLL;
+function sqlite3_sleep(ms: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_soft_heap_limit64(NewLimit: Int64): Int64; cdecl; external SQLiteDLL;
+function sqlite3_sourceid: PChar; cdecl; external SQLiteDLL;
+function sqlite3_sql(pStmt: Pointer): PChar; cdecl; external SQLiteDLL;
+function sqlite3_status(Op: Integer; pCurrent, pHighwater: PInteger; resetFlag: Boolean): Integer; cdecl; external SQLiteDLL;
+function sqlite3_step(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_stmt_readonly(pStmt: Pointer): Boolean; cdecl; external SQLiteDLL;
+function sqlite3_stmt_status(stmt: Pointer; op: Integer; resetFlg: Boolean): Integer; cdecl; external SQLiteDLL;
+function sqlite3_strnicmp(First, Second: PChar; Length: Integer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_threadsafe: Boolean; cdecl; external SQLiteDLL;
+function sqlite3_total_changes(DB: Pointer): Integer; cdecl; external SQLiteDLL;
+function sqlite3_update_hook(DB: Pointer; Callback: TSQLiteUpdateCallback; Data: Pointer): TSQLiteRollbackCallback; cdecl; external SQLiteDLL;
+function sqlite3_user_data(Context: Pointer): Pointer; cdecl; external SQLiteDLL;
 function sqlite3_value_blob(Value: Pointer): Pointer; cdecl; external SQLiteDLL;
 function sqlite3_value_bytes(Value: Pointer): Integer; cdecl; external SQLiteDLL;
 function sqlite3_value_bytes16(Value: Pointer): Integer; cdecl; external SQLiteDLL;
 function sqlite3_value_double(Value: Pointer): Double; cdecl; external SQLiteDLL;
 function sqlite3_value_int(Value: Pointer): Integer; cdecl; external SQLiteDLL;
 function sqlite3_value_int64(Value: Pointer): Int64; cdecl; external SQLiteDLL;
+function sqlite3_value_numeric_type(Value: Pointer): Integer; cdecl; external SQLiteDLL;
 function sqlite3_value_text(Value: Pointer): PChar; cdecl; external SQLiteDLL;
 function sqlite3_value_text16(Value: Pointer): PWideChar; cdecl; external SQLiteDLL;
 function sqlite3_value_text16be(Value: Pointer): PWideChar; cdecl; external SQLiteDLL;
 function sqlite3_value_text16le(Value: Pointer): PWideChar; cdecl; external SQLiteDLL;
 function sqlite3_value_type(Value: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_step(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_user_data(Context: Pointer): Pointer; cdecl; external SQLiteDLL;
-function sqlite3_aggregate_context(Context: Pointer; nBytes: Integer): Pointer; cdecl; external SQLiteDLL;
-function sqlite3_aggregate_count(Context: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_column_count(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_data_count(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_column_blob(pStmt: Pointer; iCol: Integer): Pointer; cdecl; external SQLiteDLL;
-function sqlite3_column_bytes(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_column_bytes16(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_column_double(pStmt: Pointer; iCol: Integer): Double; cdecl; external SQLiteDLL;
-function sqlite3_column_int(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_column_int64(pStmt: Pointer; iCol: Integer): Int64; cdecl; external SQLiteDLL;
-function sqlite3_column_text(pStmt: Pointer; iCol: Integer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_column_text16(pStmt: Pointer; iCol: Integer): PWideChar; cdecl; external SQLiteDLL;
-function sqlite3_column_type(pStmt: Pointer; iCol: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_column_name(pStmt: Pointer; n: Integer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_column_name16(pStmt: Pointer; n: Integer): PWideChar; cdecl; external SQLiteDLL;
-function sqlite3_column_decltype(pStmt: Pointer; i: Integer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_column_decltype16(pStmt: Pointer; i: Integer): PWideChar; cdecl; external SQLiteDLL;
-function sqlite3_bind_double(pStmt: Pointer; ParamIdx: Integer; Data: Double): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_int(pStmt: Pointer; ParamIdx: Integer; Data: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_int64(pStmt: Pointer; ParamIdx: Integer; Data: Int64): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_null(pStmt: Pointer; ParamIdx: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_text(pStmt: Pointer; ParamIdx: Integer; Data: PChar; nData: Integer; xDel: TSQLiteBDestructor): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_text16(pStmt: Pointer; ParamIdx: Integer; Data: PWideChar; nData: Integer; xDel: TSQLiteBDestructor): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_blob(pStmt: Pointer; ParamIdx: Integer; const Data; nData: Integer; xDel: TSQLiteBDestructor): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_zeroblob(pStmt: Pointer; ParamIdx: Integer; nData: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_parameter_count(pStmt: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_bind_parameter_name(pStmt: Pointer; n: Integer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_bind_parameter_index(pStmt: Pointer; zName: PChar): Integer; cdecl; external SQLiteDLL;
-function sqlite3_db_handle(pStmt: Pointer): Pointer; cdecl; external SQLiteDLL;
-function sqlite3_extended_result_codes(DB: Pointer; OnOff: Boolean): Integer; cdecl; external SQLiteDLL;
-function sqlite3_column_database_name(pStmt: Pointer; N: Integer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_column_database_name16(pStmt: Pointer; N: Integer): PWideChar; cdecl; external SQLiteDLL;
-function sqlite3_column_table_name(pStmt: Pointer; N: Integer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_column_table_name16(pStmt: Pointer; N: Integer): PWideChar; cdecl; external SQLiteDLL;
-function sqlite3_column_origin_name(pStmt: Pointer; N: Integer): PChar; cdecl; external SQLiteDLL;
-function sqlite3_column_origin_name16(pStmt: Pointer; N: Integer): PWideChar; cdecl; external SQLiteDLL;
-function sqlite3_stmt_readonly(pStmt: Pointer): Boolean; cdecl; external SQLiteDLL;
-function sqlite3_commit_hook(DB: Pointer; Callback: TSQLiteCommitCallback; Data: Pointer): TSQLiteCommitCallback; cdecl; external SQLiteDLL;
-function sqlite3_rollback_hook(DB: Pointer; Callback: TSQLiteRollbackCallback; Data: Pointer): TSQLiteRollbackCallback; cdecl; external SQLiteDLL;
-function sqlite3_update_hook(DB: Pointer; Callback: TSQLiteUpdateCallback; Data: Pointer): TSQLiteRollbackCallback; cdecl; external SQLiteDLL;
-function sqlite3_status(Op: Integer; pCurrent, pHighwater: PInteger; resetFlag: Boolean): Integer; cdecl; external SQLiteDLL;
-function sqlite3_db_status(DB: Pointer; Op: Integer; pCurrent, pHighwater: PInteger; resetFlag: Boolean): Integer; cdecl; external SQLiteDLL;
-function sqlite3_memory_used: Int64; cdecl; external SQLiteDLL;
-function sqlite3_memory_highwater(resetFlag: Boolean): Int64; cdecl; external SQLiteDLL;
-function sqlite3_sql(pStmt: Pointer): PChar; cdecl; external SQLiteDLL;
-procedure sqlite3_reset_auto_extension; cdecl; external SQLiteDLL;
-procedure sqlite3_progress_handler(DB: Pointer; OpCodeCount: Integer; Callback: TSQLiteProgressCallback; Data: Pointer); cdecl; external SQLiteDLL;
-procedure sqlite3_busy_handler(DB: Pointer; Callback: TSQLiteBusyCallback; Data: Pointer); cdecl; external SQLiteDLL;
-function sqlite3_load_extension(DB: Pointer; zFile: PChar; zProc: PChar = NIL; pzErrMsg: PPChar = NIL): Integer; cdecl; external SQLiteDLL;
-function sqlite3_enable_load_extension(DB: Pointer; OnOff: Boolean): Integer; cdecl; external SQLiteDLL;
-function sqlite3_enable_shared_cache(OnOff: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_limit(DB: Pointer; Op: Integer; NewValue: Integer = -1): Integer; cdecl; external SQLiteDLL;
-function sqlite3_blob_open(DB: Pointer; zDB, zTable, zColumn: PChar; RowID: Int64; Flags: Integer; out Blog: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_blob_close(Blog: Pointer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_blob_reopen(Blog: Pointer; RowID: Int64): Integer; cdecl; external SQLiteDLL;
-function sqlite3_blob_write(Blog: Pointer; const Buf; Size, AtOffset: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_blob_read(Blog: Pointer; var Buf; Size, FromOffset: Integer): Integer; cdecl; external SQLiteDLL;
-function sqlite3_blob_bytes(Blog: Pointer): Integer; cdecl; external SQLiteDLL;
 function sqlite3_vmprintf(Format: PChar; const va_list: TVAList): PChar; cdecl; external SQLiteDLL;
 function sqlite3_vsnprintf(Length: Integer; Output, Format: PChar; const va_list: TVAList): PChar; cdecl; external SQLiteDLL;
+procedure sqlite3_busy_handler(DB: Pointer; Callback: TSQLiteBusyCallback; Data: Pointer); cdecl; external SQLiteDLL;
+procedure sqlite3_free(p: Pointer); cdecl; external SQLiteDLL;
+procedure sqlite3_free_table(var resultp: PCharArray); cdecl; external SQLiteDLL;
+procedure sqlite3_interrupt(DB: Pointer); cdecl; external SQLiteDLL;
+procedure sqlite3_progress_handler(DB: Pointer; OpCodeCount: Integer; Callback: TSQLiteProgressCallback; Data: Pointer); cdecl; external SQLiteDLL;
+procedure sqlite3_randomness(N: Integer; P: Pointer); cdecl; external SQLiteDLL;
+procedure sqlite3_reset_auto_extension; cdecl; external SQLiteDLL;
 
-function SQLiteError(Err: Integer): string;
 function SQLiteErrorMsg(Err: Integer; Msg: PPChar): string;
 procedure SQLiteExec(DB: PPointer; const S: string);
 { IfEmpty: SQLite would behave differently depending on NIL or '' PChar - for example,
@@ -763,18 +848,12 @@ procedure SQLiteExec(DB: PPointer; const S: string);
 { WARNING: do not use 2 overloaded functions under the same name (e.g. SQLiteStr both for
            wide and ANSI inputs) - Delphi will often confuse which one to use and this
            will lead to some very tricky bugs!                                            }
-function ToSQLiteStr(Wide: WideString; IfEmpty: PChar = NIL): PChar;
+function ToSQLiteStr(const Wide: WideString; IfEmpty: PChar = NIL): PChar;
 function FromSQLiteStr(UTF8: PChar): WideString;
 function SQLiteType(Kind: Integer): TSQLiteType;
 procedure SQLiteRaise(DB: Pointer; E: ESQLite); overload;
 procedure SQLiteRaise(DB: TSQLiteDatabase; E: ESQLite); overload;
-function SQLitePrintf(Format: WideString; const Args: array of const): WideString;
-   
-// Op - one of SQLITE_STATUS_* consts; returns SQLITE_OK on success or an error code
-// on failure (Current and Peak are set to 0).
-function SQLiteStatus(Op: Integer; out Current, Peak: Integer; Reset: Boolean = False): Integer;
-function SQLiteMemUsed: Int64;
-function SQLiteMemPeak(Reset: Boolean = False): Int64;
+
 
 const
   SQLITE_STATIC                          = Pointer(0);
@@ -786,43 +865,9 @@ type
   // used in TSQLiteResult.ToRecord/s:
   TRec = array[0..$1000000 {16 MiB}] of Byte;
 
-function SQLiteError(Err: Integer): string;
-begin
-  case Err of
-  SQLITE_OK           : Result := 'Successful result';
-  SQLITE_ERROR        : Result := 'SQL error or missing database';
-  SQLITE_INTERNAL     : Result := 'An internal logic error in SQLite';
-  SQLITE_PERM         : Result := 'Access permission denied';
-  SQLITE_ABORT        : Result := 'Callback routine requested an abort';
-  SQLITE_BUSY         : Result := 'The database file is locked';
-  SQLITE_LOCKED       : Result := 'A table in the database is locked';
-  SQLITE_NOMEM        : Result := 'A malloc() failed';
-  SQLITE_READONLY     : Result := 'Attempt to write a readonly database';
-  SQLITE_INTERRUPT    : Result := 'Operation terminated by sqlite_interrupt()';
-  SQLITE_IOERR        : Result := 'Disk I/O error occurred';
-  SQLITE_CORRUPT      : Result := 'The database disk image is malformed';
-  SQLITE_NOTFOUND     : Result := '(Internal Only) Table or record not found';
-  SQLITE_FULL         : Result := 'Insertion failed because database is full';
-  SQLITE_CANTOPEN     : Result := 'Unable to open the database file';
-  SQLITE_PROTOCOL     : Result := 'Database lock protocol error';
-  SQLITE_EMPTY        : Result := '(Internal Only) Database table is empty';
-  SQLITE_SCHEMA       : Result := 'The database schema changed';
-  SQLITE_TOOBIG       : Result := 'Too much data for one row of a table';
-  SQLITE_CONSTRAINT   : Result := 'Abort due to contraint violation';
-  SQLITE_MISMATCH     : Result := 'Data type mismatch';
-  SQLITE_MISUSE       : Result := 'Library used incorrectly';
-  SQLITE_NOLFS        : Result := 'Used OS features not supported on host';
-  SQLITE_AUTH         : Result := 'Authorization denied';
-  SQLITE_ROW          : Result := 'sqlite_step() has another row ready';
-  SQLITE_DONE         : Result := 'sqlite_step() has finished executing';
-  else
-    Result := Format('Unknown SQLite error (%d)', [Err]);
-  end;
-end;
-
 function SQLiteErrorMsg(Err: Integer; Msg: PPChar): string;
-begin   
-  Result := SQLiteError(Err);
+begin
+  Result := TSQLite.Error(Err);
 
   if Msg <> NIL then
   begin
@@ -841,7 +886,7 @@ begin
     SQLiteRaise(DB, ESQLite.Create(Res, Error));
 end;
 
-function ToSQLiteStr(Wide: WideString; IfEmpty: PChar = NIL): PChar;
+function ToSQLiteStr(const Wide: WideString; IfEmpty: PChar = NIL): PChar;
 begin
   if Length(Wide) = 0 then
     Result := IfEmpty
@@ -860,13 +905,13 @@ end;
 function SQLiteType(Kind: Integer): TSQLiteType;
 begin
   Dec(Kind);  // SQLITE_INTEGER = 1
-  
+
   if (Kind < Integer(Low(Result))) or (Kind > Integer(High(Result))) then
     raise ESQLiteInvalidType.Create(Kind)
     else
       Result := TSQLiteType(Kind);
 end;
-                      
+
 procedure SQLiteRaise(DB: Pointer; E: ESQLite); overload;
 begin
   E.FillWithInfoFrom(DB);
@@ -884,84 +929,19 @@ begin
     end;
 end;
 
-function SQLitePrintf(Format: WideString; const Args: array of const): WideString;
-var
-  VA: TVAList;
-  StrI, I: Integer;
-  Strings: array[0..High(VA)] of String;
-  Res: PChar;
-begin
-  StrI := 0;    
-
-  for I := 0 to Length(Args) - 1 do
-    with Args[I] do
-      if I >= Length(VA) then
-        Exit
-        else
-          case VType of
-          vtInteger:      VA[I] := @VInteger;
-          vtExtended:     VA[I] := @VExtended;
-          vtPChar,
-          vtAnsiString:   VA[I] := Args[I].VPChar;
-          vtPWideChar,
-          vtWideString:
-            begin
-              Strings[StrI] := ToSQLiteStr(Args[I].VPWideChar, '') + #0;
-              VA[I] := @Strings[StrI][1];
-              Inc(StrI);
-            end;
-          else
-            if (VType = vtPointer) and (VPointer = NIL) then
-              VA[I] := NIL
-              else
-                raise ESQLiteUnsupportedPrintfArg.Create(VType);
-          end;
-                                       
-  Res := sqlite3_vmprintf(ToSQLiteStr(Format, ''), VA);
-  Result := FromSQLiteStr(Res);
-  sqlite3_free(Res);
-end;
-
-function SQLiteStatus(Op: Integer; out Current, Peak: Integer; Reset: Boolean = False): Integer;
-var
-  Cur, High: PInteger;
-begin
-  Current := 0;
-  Peak := 0;
-
-  Result := sqlite3_status(Op, @Cur, @High, Reset);
-  if Result = SQLITE_OK then
-  begin
-    if Cur <> NIL then
-      Current := Cur^;
-    if High <> NIL then
-      Peak := High^;
-  end;
-end;
-                        
-function SQLiteMemUsed: Int64;
-begin
-  Result := sqlite3_memory_used;
-end;
-
-function SQLiteMemPeak(Reset: Boolean = False): Int64;
-begin
-  Result := sqlite3_memory_highwater(Reset);
-end;
-
 { ESQLite }
 
 constructor ESQLite.Create(Code: Integer; Msg: String);
-begin             
+begin
   FMessageUpdated := False;
-  
+
   Self.Code := Code;
   Self.Msg := Msg;
 
   if Msg = '' then
-    Msg := SQLiteError(Code)
+    Msg := TSQLite.Error(Code)
     else if Code >= 0 then
-      Msg := SQLiteError(Code) + ': ' + Msg;
+      Msg := TSQLite.Error(Code) + ': ' + Msg;
   inherited Create(Msg);
 end;
 
@@ -975,7 +955,7 @@ begin
       sqlite3_free(Msg);
     end;
 end;
-                               
+
 procedure ESQLite.FillWithInfoFrom(DB: Pointer);
 begin
   if DB <> NIL then
@@ -1007,7 +987,7 @@ begin
   Self.FN := FN;
   Self.Flags := Flags;
   Self.VFS := VFS;
-end;                           
+end;
 
 constructor ESQLiteLoadingExtension.Create(Code: Integer; Msg: PPChar; const FN, EntryPoint: WideString);
 begin
@@ -1025,7 +1005,7 @@ end;
 
 constructor ESQLiteUnsupportedPrintfArg.Create(VType: Integer);
 begin
-  inherited Create(-1, 'SQLitePrintf was passed an unsupported argument with VType = ' + IntToStr(VType));
+  inherited Create(-1, 'TSQLite.Printf was passed an unsupported argument with VType = ' + IntToStr(VType));
   Self.VType := VType;
 end;
 
@@ -1034,7 +1014,7 @@ begin
   inherited Create(-1, 'SQLite action constant (' + IntToStr(Action) + ') cannot be converted into TSQLiteAction.');
   Self.Action := Action;
 end;
-                      
+
 constructor ESQLitePreparingSQL.Create(Code: Integer; const SQL: WideString);
 begin
   inherited Create(Code, SQL);
@@ -1071,7 +1051,7 @@ begin
   inherited Create(Code, 'Error binding parameter #' + IntToStr(Param));
   ParamIndex := Param;
   ParamName := '';
-end;                      
+end;
 
 constructor ESQLiteResultToRecord.Create(Reason: WideString);
 begin
@@ -1086,6 +1066,25 @@ begin
   inherited Create(Code, 'Error binding parameter "' + Param + '"');
   ParamIndex := 0;
   ParamName := Param;
+end;
+
+constructor ESQLiteEmptyBindParam.Create(const Param: WideString);
+begin
+  ESQLite(Self).Create( -1, WideFormat('TSQLiteQuery.Bind was passed empty param name ("%s")', [Param]) );
+end;
+
+constructor ESQLiteUnsupportedBindArg.Create(Param: WideString; VType: Integer);
+begin
+  ESQLite(Self).Create( -1, WideFormat('TSQLiteQuery.Bind was passed an unsupported VType %d of param %s', [VType, Param]) );
+  Self.ParamName := Param;
+  Self.VType := VType;
+end;
+
+constructor ESQLiteUnsupportedBindArg.Create(Param, VType: Integer);
+begin
+  ESQLite(Self).Create( -1, WideFormat('TSQLiteQuery.Bind was passed an unsupported VType %d of param #%d', [VType, Param]) );
+  Self.ParamIndex := Param;
+  Self.VType := VType;
 end;
 
 constructor ESQLiteOpenTableBlob.Create(Code: Integer; const DB, Table, Field: WideString; RowID: Int64);
@@ -1114,21 +1113,233 @@ begin
   inherited Create(Code, 'Error ' + Operation + 'ing BLOB field');
 end;
 
-{ TSQLiteDatabase }
-                                           
-class function TSQLiteDatabase.LibVersion: WideString;
+{ TSQLite }
+
+class function TSQLite.Version: WideString;
 begin
   Result := FromSQLiteStr(sqlite3_libversion);
 end;
 
-class function TSQLiteDatabase.LibVersionNum: Integer;
+class function TSQLite.VersionNum: Integer;
 begin
   Result := sqlite3_libversion_number;
 end;
 
-class function TSQLiteDatabase.SourceID: WideString;
+class function TSQLite.SourceID: WideString;
 begin
   Result := FromSQLiteStr(sqlite3_sourceid);
+end;
+
+class function TSQLite.Quote(const Str: WideString): WideString;
+begin
+  Result := TSQLite.Printf('%q', [Str]);
+end;
+
+class function TSQLite.QuoteWrapping(const Str: WideString): WideString;
+begin
+  Result := TSQLite.Printf('%Q', [Str]);
+end;
+
+class function TSQLite.QuoteOrNull(const Str: WideString): WideString;
+begin
+  if Str = '' then
+    Result := 'NULL'
+    else
+      Result := QuoteWrapping(Str);
+end;
+
+class function TSQLite.IsThreadSafe: Boolean;
+begin
+  Result := sqlite3_threadsafe;
+end;
+
+class function TSQLite.HasCompileOption(const Name: WideString): Boolean;
+begin
+  Result := sqlite3_compileoption_used(ToSQLiteStr(Name));
+end;
+
+class function TSQLite.CompileOptions(WithPrefix: Boolean = False): TStrings;
+var
+  I: Integer;
+  Option: String;
+begin
+  Result := TStringList.Create;
+  try
+    for I := 0 to MaxInt do
+    begin
+      Option := sqlite3_compileoption_get(I);
+      if Option = '' then
+        Break;
+
+      if WithPrefix then
+        Option := 'SQLITE_' + Option;
+      Result.Add(Option);
+    end;
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
+class function TSQLite.Random(Size: Integer): TMemoryStream;
+var
+  Buf: Pointer;
+begin
+  Result := TMemoryStream.Create;
+  try
+    Buf := sqlite3_malloc(5);
+    try
+      sqlite3_randomness(Size, Buf);
+      Result.WriteBuffer(Buf^, Size);
+      Result.Position := 0;
+    finally
+      sqlite3_free(Buf);
+    end;
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
+class function TSQLite.ReleaseMemory(Amount: Integer): Integer;
+begin
+  Result := sqlite3_release_memory(Amount);
+end;
+
+class function TSQLite.SoftHeapLimit(NewLimit: Int64): Int64;
+begin
+  Result := sqlite3_soft_heap_limit64(NewLimit);
+end;
+
+class function TSQLite.Error(Err: Integer): WideString;
+begin
+  case Err of
+  SQLITE_OK           : Result := 'Successful result';
+  SQLITE_ERROR        : Result := 'SQL error or missing database';
+  SQLITE_INTERNAL     : Result := 'An internal logic error in SQLite';
+  SQLITE_PERM         : Result := 'Access permission denied';
+  SQLITE_ABORT        : Result := 'Callback routine requested an abort';
+  SQLITE_BUSY         : Result := 'The database file is locked';
+  SQLITE_LOCKED       : Result := 'A table in the database is locked';
+  SQLITE_NOMEM        : Result := 'A malloc() failed';
+  SQLITE_READONLY     : Result := 'Attempt to write a readonly database';
+  SQLITE_INTERRUPT    : Result := 'Operation terminated by sqlite_interrupt()';
+  SQLITE_IOERR        : Result := 'Disk I/O error occurred';
+  SQLITE_CORRUPT      : Result := 'The database disk image is malformed';
+  SQLITE_NOTFOUND     : Result := '(Internal Only) Table or record not found';
+  SQLITE_FULL         : Result := 'Insertion failed because database is full';
+  SQLITE_CANTOPEN     : Result := 'Unable to open the database file';
+  SQLITE_PROTOCOL     : Result := 'Database lock protocol error';
+  SQLITE_EMPTY        : Result := '(Internal Only) Database table is empty';
+  SQLITE_SCHEMA       : Result := 'The database schema changed';
+  SQLITE_TOOBIG       : Result := 'Too much data for one row of a table';
+  SQLITE_CONSTRAINT   : Result := 'Abort due to contraint violation';
+  SQLITE_MISMATCH     : Result := 'Data type mismatch';
+  SQLITE_MISUSE       : Result := 'Library used incorrectly';
+  SQLITE_NOLFS        : Result := 'Used OS features not supported on host';
+  SQLITE_AUTH         : Result := 'Authorization denied';
+  SQLITE_ROW          : Result := 'sqlite_step() has another row ready';
+  SQLITE_DONE         : Result := 'sqlite_step() has finished executing';
+  else
+    Result := Format('Unknown SQLite error (%d)', [Err]);
+  end;
+end;
+
+class function TSQLite.Printf(Format: WideString; const Args: array of const): WideString;
+var
+  VA: TVAList;
+  StrI, I: Integer;
+  Strings: array[0..High(VA)] of String;
+  Res: PChar;
+begin
+  StrI := 0;
+
+  for I := 0 to Length(Args) - 1 do
+    with Args[I] do
+      if I >= Length(VA) then
+        Exit
+        else
+          // SQLite supports %f but I couldn't get Delphi's VExtended work with it;
+          // others (Integer, WideString, String) have been tested fine.
+          case VType of
+          vtInteger:      VA[I] := Pointer(VInteger);
+          vtPChar,
+          vtAnsiString:   VA[I] := VPChar;
+          vtPWideChar,
+          vtWideString:
+            begin
+              Strings[StrI] := ToSQLiteStr(VPWideChar, '') + #0;
+              VA[I] := @Strings[StrI][1];
+              Inc(StrI);
+            end;
+          else
+            if (VType = vtPointer) and (VPointer = NIL) then
+              VA[I] := NIL
+              else
+                raise ESQLiteUnsupportedPrintfArg.Create(VType);
+          end;
+
+  Res := sqlite3_vmprintf(ToSQLiteStr(Format, ''), VA);
+  Result := FromSQLiteStr(Res);
+  sqlite3_free(Res);
+end;
+
+class function TSQLite.Status(Op: Integer; out Current, Peak: Integer; Reset: Boolean = False): Integer;
+var
+  Cur, High: PInteger;
+begin
+  Current := 0;
+  Peak := 0;
+
+  Result := sqlite3_status(Op, @Cur, @High, Reset);
+  if Result = SQLITE_OK then
+  begin
+    if Cur <> NIL then
+      Current := Cur^;
+    if High <> NIL then
+      Peak := High^;
+  end;
+end;
+
+class function TSQLite.MemoryUsed: Int64;
+begin
+  Result := sqlite3_memory_used;
+end;
+
+class function TSQLite.MemoryPeak(Reset: Boolean = False): Int64;
+begin
+  Result := sqlite3_memory_highwater(Reset);
+end;
+
+class function TSQLite.StrIComp(const S1, S2: WideString): Integer;
+var
+  S1Enc, S2Enc: PChar;
+begin
+  S1Enc := ToSQLiteStr(S1);
+  S2Enc := ToSQLiteStr(S2);
+
+  Result := Length(S1Enc);
+  if Result > Length(S2Enc) then
+    Result := Length(S2Enc);
+
+  Result := sqlite3_strnicmp(S1Enc, S2Enc, Result);
+end;
+
+{ TSQLiteDatabase }
+
+class function TSQLiteDatabase.Quote(const Str: WideString): WideString;
+begin
+  Result := TSQLite.Quote(Str);
+end;
+
+class function TSQLiteDatabase.QuoteWrapping(const Str: WideString): WideString;
+begin
+  Result := TSQLite.QuoteWrapping(Str);
+end;
+
+class function TSQLiteDatabase.QuoteOrNull(const Str: WideString): WideString;
+begin
+  Result := TSQLite.QuoteOrNull(Str);
 end;
 
 class function TSQLiteDatabase.GetTempFileName: WideString;
@@ -1152,24 +1363,6 @@ begin
 
   if Result = '' then
     raise Exception.Create('Cannot generate temporary file name for TSQLiteDatabase.');
-end;                      
-
-class function TSQLiteDatabase.Quote(const Str: WideString): WideString;
-begin
-  Result := SQLitePrintf('%q', [Str]);
-end;
-
-class function TSQLiteDatabase.QuoteWrapping(const Str: WideString): WideString;
-begin
-  Result := SQLitePrintf('%Q', [Str]);
-end;       
-
-class function TSQLiteDatabase.QuoteOrNull(const Str: WideString): WideString;
-begin
-  if Str = '' then
-    Result := 'NULL'
-    else
-      Result := QuoteWrapping(Str);
 end;
 
 procedure TSQLiteDatabase.Init;
@@ -1179,6 +1372,7 @@ begin
   FOpenVFS := '';
 
   FDeleteOnClose := False;
+  FTransactionNesting := 0;
   FHandle := NIL;
 
   FOnProgress := NIL;
@@ -1305,7 +1499,7 @@ begin
   begin
     FQueries.Clear;
     FTables.Clear;
-    
+
     sqlite3_close(FHandle);
     FHandle := NIL;
 
@@ -1344,8 +1538,8 @@ procedure TSQLiteDatabase.TablesOf(DB: WideString; Dest: TStringsW);
 begin
   Dest.BeginUpdate;
   try
-    DB := QuoteWrapping(DB);
-    with QueryResult('SELECT name FROM ' + DB + '.sqlite_master WHERE type = ''table'' ORDER BY name') do
+    DB := TSQLite.QuoteWrapping(DB);
+    with QueryResult('SELECT name FROM ' + DB + '.sqlite_master WHERE type = ? ORDER BY name', ['table']) do
       try
         if HasAny then
           repeat
@@ -1359,14 +1553,16 @@ begin
   end;
 end;
 
-function TSQLiteDatabase.NewQuery(const SQL: WideString): TSQLiteQuery;
+function TSQLiteDatabase.NewQuery(const SQL: WideString; Bind: array of const): TSQLiteQuery;
 begin
   Result := TSQLiteQuery.Create(SQL, Self);
-end;                              
+  Result.Bind(Bind);
+end;
 
-function TSQLiteDatabase.QueryResult(const SQL: WideString; NilIfNone: Boolean = False): TSQLiteResult;
+function TSQLiteDatabase.QueryResult(const SQL: WideString; Bind: array of const;
+  NilIfNone: Boolean = False): TSQLiteResult;
 begin
-  with NewQuery(SQL) do
+  with NewQuery(SQL, Bind) do
     try
       Result := Run;
       if (Result = NIL) and not NilIfNone then
@@ -1376,9 +1572,9 @@ begin
     end;
 end;
 
-function TSQLiteDatabase.Execute(const SQL: WideString): Integer;
+function TSQLiteDatabase.Execute(const SQL: WideString; Bind: array of const): Integer;
 begin
-  with NewQuery(SQL) do
+  with NewQuery(SQL, Bind) do
     try
       Result := 0;
       repeat
@@ -1438,8 +1634,8 @@ end;
       TSQLiteDatabase(Data).FOnUpdate(TSQLiteDatabase(Data), Act, TSQLiteDatabase(Data)[Table], RowID);
     end;
 end;
-              
-procedure TSQLiteDatabase.SetOnProgress(Value: TSQLiteProgressEvent); 
+
+procedure TSQLiteDatabase.SetOnProgress(Value: TSQLiteProgressEvent);
 begin
   FOnProgress := Value;
 
@@ -1482,18 +1678,18 @@ end;
   procedure TSQLiteDatabase.SetOnUpdate(Value: TSQLiteUpdateEvent);
   begin
     FOnUpdate := Value;
-    
+
     if Assigned(Value) then
       sqlite3_update_hook(FHandle, OnUpdateCb, Self)
       else
         sqlite3_update_hook(FHandle, NIL, Self);
   end;
-                        
+
 procedure TSQLiteDatabase.SetOnProgressOpCodeCount(const Value: Integer);
 begin
   FOnProgressOpCodeCount := Value;
-end;          
-                                    
+end;
+
 procedure TSQLiteDatabase.SetBusyTimeout(Value: Integer);
 begin
   FBusyTimeout := Value;
@@ -1552,7 +1748,7 @@ end;
 function TSQLiteDatabase.LastInsertID: Int64;
 begin
   Result := sqlite3_last_insert_rowid(FHandle);
-end;                             
+end;
 
 function TSQLiteDatabase.LastChanged: Integer;
 begin
@@ -1586,7 +1782,7 @@ end;
 
 function TSQLiteDatabase.GetForeignKeys: Boolean;
 begin
-  with QueryResult('PRAGMA foreign_keys') do
+  with QueryResult('PRAGMA foreign_keys', []) do
     try
       Result := HasAny and Boolean(Column(0).Int);
     finally
@@ -1598,7 +1794,50 @@ procedure TSQLiteDatabase.SetForeignKeys(const Value: Boolean);
 const
   States: array[0..1] of String = ('OFF', 'ON');
 begin
-  Execute('PRAGMA foreign_keys = ' + States[Byte(Value)]);
+  Execute('PRAGMA foreign_keys = ' + States[Byte(Value)], []);
+end;
+
+procedure TSQLiteDatabase.BeginTransaction(Kind: TSQLiteTransactionType);
+const
+  Kinds: array[TSQLiteTransactionType] of String = ('', ' DEFERRED', ' IMMEDIATE', ' EXCLUSIVE');
+begin
+  FTransactionNesting := 1;
+  Execute('BEGIN' + Kinds[Kind] + ' TRANSACTION', []);
+end;
+
+procedure TSQLiteDatabase.Commit;
+begin
+  FTransactionNesting := 0;
+  Execute('COMMIT', []);
+end;
+
+procedure TSQLiteDatabase.Rollback;
+begin
+  FTransactionNesting := 0;
+  Execute('ROLLBACK', []);
+end;
+
+function TSQLiteDatabase.InTransaction: Boolean;
+begin
+  Result := FTransactionNesting > 0;
+end;
+
+function TSQLiteDatabase.BeginNestedTransaction(Kind: TSQLiteTransactionType): Boolean;
+begin
+  Result := not InTransaction;
+  if Result then
+    BeginTransaction(Kind)
+    else
+      Inc(FTransactionNesting);
+end;
+
+function TSQLiteDatabase.CommitNested: Boolean;
+begin
+  Result := FTransactionNesting = 1;
+  if Result then
+    Commit
+    else
+      Dec(FTransactionNesting);
 end;
 
 { TSQLiteTable }
@@ -1607,7 +1846,7 @@ constructor TSQLiteTable.Create(DB: TSQLiteDatabase; const Name: WideString);
 begin
   FDatabase := DB;
   FName := Name;
-  
+
   FBlobs := TSQLiteObjectList.Create;
 end;
 
@@ -1633,6 +1872,25 @@ begin
       sqlite3_blob_close(Handle);
       SQLiteRaise(FDatabase, ESQLiteOpenTableBlob.Create(Error, DB, FName, Field, RowID));
       Result := NIL;
+    end;
+end;
+
+function TSQLiteTable.QueryCount(Where: WideString): Int64;
+begin
+  Result := QueryCount(Where, []);
+end;
+
+function TSQLiteTable.QueryCount(Where: WideString; Bind: array of const): Int64;
+begin
+  if Where <> '' then
+    Where := ' WHERE ' + Where;
+  Where := '"' + FName + '"';
+
+  with FDatabase.QueryResult('SELECT COUNT(1) FROM ' + Where, Bind) do
+    try
+      Result := Column(0).Int64;
+    finally
+      Free;
     end;
 end;
 
@@ -1693,7 +1951,7 @@ function TSQLiteQuery.Next: Boolean;
 begin
   sqlite3_finalize(FHandle);
   FHandle := NIL;
-  
+
   FHandle := PrepareNext;
   Result := HasAny;
 end;
@@ -1742,6 +2000,11 @@ begin
   Result := sqlite3_stmt_readonly(FHandle);
 end;
 
+function TSQLiteQuery.Status(Op: Integer; Reset: Boolean): Integer;
+begin
+  Result := sqlite3_stmt_status(FHandle, Op, Reset);
+end;
+
 procedure TSQLiteQuery.RunFreeing;
 var
   Res: TSQLiteResult;
@@ -1750,7 +2013,56 @@ begin
   if Res <> NIL then
     Res.Free;
 end;
-                              
+
+procedure TSQLiteQuery.Bind(Values: array of const);
+var
+  ParamI, I: Integer;
+  ParamName: WideString;
+  SkipParam: Boolean;
+begin
+  ParamI := 0;
+  ParamName := '';
+
+  for I := 0 to Length(Values) - 1 do
+    with Values[I] do
+      if (ParamName = '') and (VType = vtString) and (Copy(VPChar, 1, 1)[1] in [':', '?']) then
+        ParamName := VPChar
+        else
+        begin
+          SkipParam := False;
+
+          if ParamName <> '' then
+          begin
+            if ParamName[1] = '?' then
+              SkipParam := not HasParam( Copy(ParamName, 2, Length(ParamName)) );
+
+            Delete(ParamName, 1, 1);
+          end;
+
+          if not SkipParam then
+            case VType of
+            vtInteger:    if ParamName = '' then BindIntegerTo(ParamI, VInteger)  else BindIntegerTo(ParamName, VInteger);
+            vtExtended:   if ParamName = '' then BindDoubleTo(ParamI, VExtended^) else BindDoubleTo(ParamName, VExtended^);
+            vtChar:       if ParamName = '' then BindTextTo(ParamI, VChar)        else BindTextTo(ParamName, VChar);
+            vtString:     if ParamName = '' then BindBlobTo(ParamI, String(VPChar)) else BindBlobTo(ParamName, String(VPChar));
+            vtWideString: if ParamName = '' then BindTextTo(ParamI, VPWideChar)   else BindTextTo(ParamName, VPWideChar);
+            else
+              if (VType = vtPointer) and (VPointer = NIL) then
+                if ParamName = '' then
+                  BindNullTo(ParamI)
+                  else
+                    BindNullTo(ParamName)
+                else if ParamName = '' then
+                  SQLiteRaise(FDatabase, ESQLiteUnsupportedBindArg.Create(ParamI, VType))
+                  else
+                    SQLiteRaise(FDatabase, ESQLiteUnsupportedBindArg.Create(ParamName, VType));
+            end;
+
+          Inc(ParamI);
+          ParamName := '';
+        end;
+end;
+
 procedure TSQLiteQuery.CheckBindRes(Param, Status: Integer);
 begin
   if Status <> SQLITE_OK then
@@ -1901,7 +2213,7 @@ procedure TSQLiteResult.ResetRow;
 begin
   ZeroMemory(@FSetCols, SizeOf(FSetCols));
 end;
-                                  
+
 procedure TSQLiteResult.Close;
 begin
   sqlite3_finalize(FHandle);
@@ -1912,15 +2224,15 @@ function TSQLiteResult.ColCount: Integer;
 begin
   if HasAny then
     Result := sqlite3_data_count(FHandle)
-    else                                 
+    else
       Result := 0;
 end;
-                                               
+
 function TSQLiteResult.Column(const Name: WideString): TSQLiteColumn;
 var
   I: Integer;
   Names: WideString;
-begin                                
+begin
   if not HasAny then
     SQLiteRaise(FDatabase, ESQLiteNoMoreResults.Create('Column(Name)'));
 
@@ -1939,7 +2251,7 @@ begin
 end;
 
 function TSQLiteResult.Column(Index: Integer): TSQLiteColumn;
-begin                                              
+begin
   if not HasAny then
     SQLiteRaise(FDatabase, ESQLiteNoMoreResults.Create('Column(Index)'));
 
@@ -1962,7 +2274,7 @@ end;
     with Result do
     begin
       ZeroMemory(@Result, SIzeOf(Result));
-      
+
       Kind := SQLiteType( sqlite3_column_type(FHandle, Index) );
       DeclType := FromSQLiteStr( sqlite3_column_decltype(FHandle, Index) );
 
@@ -1982,7 +2294,7 @@ end;
       sqBlob, sqText:
         begin
           SetLength(Blob, sqlite3_column_bytes(FHandle, Index));
-        
+
           Ptr := sqlite3_column_blob(FHandle, Index);
           Move(Ptr^, Blob[1], Length(Blob));
 
@@ -1991,7 +2303,7 @@ end;
             Text := UTF8Decode(Blob);
             Blob := '';
           end;
-        end;  
+        end;
       end;
     end;
   end;
@@ -2012,14 +2324,14 @@ begin
   end;
 
   Result := FHasAny;
-end;   
-                      
+end;
+
 procedure TSQLiteResult.Reset;
 var
   Error: Integer;
 begin
   Error := sqlite3_reset(FHandle);
-  
+
   if (Error <> SQLITE_OK) and (Error <> SQLITE_DONE) and (Error <> SQLITE_ROW) then
     SQLiteRaise(FDatabase, ESQLiteResettingResult.Create(Error))
     else
@@ -2036,7 +2348,7 @@ var
   Value: array[0..7] of Byte;
 begin
   Result := 0;
-  
+
   I := 0;
   while I < Length(Fields) do
   begin
@@ -2100,19 +2412,32 @@ begin
     SQLiteRaise(FDatabase, ESQLiteResultToRecord.Create('negative TailSpace'));
 
   Result := 0;
-  
+
     Ptr := 0;
-    repeat               
+    repeat
       if Result >= MaxCount then
         Break;
 
       Inc( Ptr, ToRecord(TRec(RecArray)[Ptr], Fields) + TailSpace );
       Inc(Result);
     until not Next;
-  
+
   if Result >= MaxCount then
     Result := -1;
-end;                     
+end;
+
+function TSQLiteResult.RowCount: Integer;
+begin
+  Reset;
+
+  Result := 0;
+  if HasAny then
+    repeat
+      Inc(Result);
+    until not Next;
+
+  Reset;
+end;
 
 { TSQLiteEmptyResult }
 
@@ -2153,7 +2478,7 @@ procedure TSQLiteBlob.SetSize(NewSize: Integer);
 begin
   SQLiteRaise(FDatabase, ESQLiteSettingBlobSize.Create(GetSize, NewSize));
 end;
-                
+
 function TSQLiteBlob.Seek(Offset: Integer; Origin: Word): LongInt;
 begin
   case Origin of
@@ -2172,7 +2497,7 @@ end;
 
 function TSQLiteBlob.Read(var Buffer; Count: Integer): Longint;
 begin
-  Check('read', sqlite3_blob_read(FHandle, Buffer, Count, FPosition));  
+  Check('read', sqlite3_blob_read(FHandle, Buffer, Count, FPosition));
   Result := Count;
 end;
 

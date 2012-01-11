@@ -34,7 +34,7 @@ type
       Measure:  WideString;
     end;
   end;
-  
+
   TCallOnEachLineOptions_OO = record
     Callback: TCallOnEachLineInCallback_OO;
     UserData: DWord;
@@ -54,6 +54,8 @@ function TryStrToFloatStrict(const S: String; out Value: Double;
 function DetectEolnStyleIn(Str: WideString): WideString;
 
 // not more than 65536 resulting pieces are supported.
+function ExplodeUnquoting(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
+// not more than 65536 resulting pieces are supported.
 function Explode(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
 // removes EscapeChars from First; returns False, sets First to Str and Second to '' if Str contained no Splitter.
 function Split(Str: WideString; Splitter: WideString; var First, Second: WideString;
@@ -68,21 +70,32 @@ function ExtractQuotedStr(var Src: PWideChar; Quote: WideChar): WideString;
 function DequotedStr(const S: WideString; AQuote: WideChar): WideString;
 function StrEndW(const Str: PWideChar): PWideChar;
 function StrScanW(Str: PWideChar; Chr: WideChar): PWideChar;
-                       
-  { Unlike AnsiQuotedStr, this function won't surround result with CharToQuote. }
-  function Quote(const Str, CharToQuote: WideString; StartAt: Integer = 1): WideString;     
-  { Unlike AnsiExtractQuotedStr, Str doesn't need to start with QuoteChar; however, it must
+
+
+
+  { Unlike AnsiQuotedStr, this function won't surround result with CharToQuote. }
+  function Quote(const Str, CharToQuote: WideString; StartAt: Integer = 1): WideString;
+
+  { Unlike AnsiExtractQuotedStr, Str doesn't need to start with QuoteChar; however, it must
     end with it (EndPos will be set AFTER its position). If there was no ending QuoteChar
     found EndPos is set to -1 and Result is undefined. If quote char was last char in Str
-    EndPos will be set to Length(Str) + 1. }
-  function Unquote(const Str, QuoteChar: WideString; out EndPos: Integer; StartAt: Integer): WideString; overload;
-  // will raise EConvertError if QuoteChar was not found in Str (i.e. if EndPos was set to -1).
-  function Unquote(const Str, QuoteChar: WideString; StartAt: Integer = 1): WideString; overload;
 
-  function PascalQuote(const Str: WideString): WideString;
-  // sets Pos to -1 if string ended properly on an apostrophe ('), otherwise Pos is set
-  // after the closing apostrophe if it was found earlier or past the end of Str if there was none.
-  function PascalUnquote(const Str: WideString; var Pos: Integer): WideString; overload;
+    EndPos will be set to Length(Str) + 1. }
+
+  function Unquote(const Str, QuoteChar: WideString; out EndPos: Integer; StartAt: Integer): WideString; overload;
+
+  // will raise EConvertError if QuoteChar was not found in Str (i.e. if EndPos was set to -1).
+
+  function Unquote(const Str, QuoteChar: WideString; StartAt: Integer = 1): WideString; overload;
+
+
+  function PascalQuote(const Str: WideString): WideString;
+
+  // sets Pos to -1 if string ended properly on an apostrophe ('), otherwise Pos is set
+
+  // after the closing apostrophe if it was found earlier or past the end of Str if there was none.
+
+  function PascalUnquote(const Str: WideString; var Pos: Integer): WideString; overload;
   function PascalUnquote(Str: WideString; MustStartWithQuote: Boolean = True): WideString; overload;
 
 function IsDelimiter(const Delimiters, S: WideString; Index: Integer): Boolean;
@@ -96,7 +109,7 @@ function WrapText(const Str: WideString; const Delimiter: WideString; const MaxW
 function PadText(const Str: WideString; const NewLine, PadStr: WideString; const MaxWidth: Word): WideString;
 function PadTextWithVariableLineLength(const Str: WideString; const NewLine, PadStr: WideString;
   const LineLengths: array of Integer): WideString;
-                       
+
 function StrPad(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
 function StrPadLeft(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
 function StrRepeat(const Str: WideString; Times: Integer): WideString;
@@ -109,6 +122,7 @@ function CountSubstr(const Substr, Str: WideString): Integer;
 
 function EscapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
 function UnescapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
+function BinToHex(const Buf; Size: Integer): String;    // outputs in upper case.
 
 function FormatVersion(Version: Word): WideString;
 // formats date in format $DDMMYYYY. This format is useful because it's locale-independent.
@@ -229,11 +243,51 @@ begin
         Result := LF;
 end;
 
+function ExplodeUnquoting(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
+var
+  Current, I: Integer;
+  IsDelim: Boolean;
+begin
+  Current := 0;
+  IsDelim := False;
+
+  SetLength(Result, 0);
+  SetLength(Result, $FFFF);
+
+    for I := 1 to Length(Str) do
+      if Str[I] = Delimiter then
+      begin
+        if IsDelim then
+          Result[Current] := Result[Current] + Delimiter;
+
+        IsDelim := not IsDelim;
+      end
+        else if IsDelim then
+        begin
+          if not SkipEmpty or (Result[Current] <> '') then
+          begin
+            Inc(Current);
+            if Current >= Length(Result) then
+              raise EOutOfMemory.CreateFmt('ExplodeUnquoting only supports up to %d elements.', [Length(Result)]);
+          end;
+
+          IsDelim := False;
+        end
+          else
+            Result[Current] := Result[Current] + Str[I];
+
+  if IsDelim and not SkipEmpty then
+    Inc(Current);
+
+  SetLength(Result, Current + 1);
+
+end;
+
 function Explode(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
 var
   Current, P: Integer;
 begin
-  Current := 0;               
+  Current := 0;
   SetLength(Result, 0);
   SetLength(Result, $FFFF);
 
@@ -475,7 +529,7 @@ end;
       else
         EndPos := -1;
   end;
-  
+
   function Unquote(const Str, QuoteChar: WideString; StartAt: Integer = 1): WideString;
   var
     EndPos: Integer;
@@ -485,7 +539,7 @@ end;
       raise EConvertError.CreateFmt('Cannot Unquote(%s) - no ending %s found.', [Copy(Str, StartAt, 100), QuoteChar]);
   end;
 
-  function PascalQuote(const Str: WideString): WideString;                                   
+  function PascalQuote(const Str: WideString): WideString;
   var
     I: Integer;
     Opened: Boolean;
@@ -584,7 +638,7 @@ end;
           else
             raise EConvertError.CreateFmt('Pascal-quoted string "%s" must end with' +
                                           ' an apostrophe ('').', [Str]);
-      end;                               
+      end;
   end;
 
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
@@ -633,7 +687,7 @@ end;
 function ConsistsOfChars(const Str, Chars: WideString): Boolean;
 var
   I: Integer;
-begin            
+begin
   Result := False;
 
   for I := 1 to Length(Str) do
@@ -724,6 +778,23 @@ begin
 
   if Escaping then
     Result := Result + EscapeChar;
+end;
+
+// String-adapted version of BinToHex from Classes.pas.
+function BinToHex(const Buf; Size: Integer): String;
+type
+  TBuf = array of Byte;
+const
+  Convert: array[0..15] of Char = '0123456789ABCDEF';
+var
+  I: Integer;
+begin
+  SetLength(Result, Size * 2);
+  for I := 0 to Size - 1 do
+  begin
+    Result[I * 2]     := Convert[TBuf(Buf)[I] shr  4];
+    Result[I * 2 + 1] := Convert[TBuf(Buf)[I] and $F];
+  end;
 end;
 
 function IsDelimiter(const Delimiters, S: WideString; Index: Integer): Boolean;
@@ -993,7 +1064,7 @@ end;
 function PosW(const Substr, Str: WideString; Start: Word = 1): Integer;
 var
   StrPos, SubstrPos: Integer;
-begin                   
+begin
   Result := 0;
   if Substr = '' then
     Exit;
@@ -1016,7 +1087,7 @@ begin
         end
         else
           Inc(SubstrPos);
-          
+
     Inc(StrPos);
   end;
 end;

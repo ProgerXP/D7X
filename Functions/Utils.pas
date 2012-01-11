@@ -5,8 +5,17 @@ interface
 uses StringsW, Windows, SysUtils, Classes, Graphics, StringUtils,
      Forms;    // Forms is used for FormFade*.
 
+const
+  { for SetNtfsCompression: }
+  FSCTL_SET_COMPRESSION = $9C040;
+  COMPRESSION_FORMAT_NONE = 0;
+  COMPRESSION_FORMAT_DEFAULT = 1;
+
 type
   TWideStringArray = StringUtils.TWideStringArray;
+
+  // initially Exists is set to True.
+  TEnvVarResolver = function (Name: WideString; var Exists: Boolean): WideString of object;
 
   PFormFadeSettings = ^TFormFadeSettings;
   TFormFadeSettings = record
@@ -94,6 +103,7 @@ function FileExists(Path: WideString): Boolean;
 function FileSize(Path: WideString): DWord;
 function FileSize64(Path: WideString): Int64;
 function DeleteFile(Path: WideString): Boolean;
+function SetNtfsCompression(const FileName: WideString; Level: Word): Boolean;
 
 { recursive functions }
 function CopyDirectory(Source, Destination: WideString): Boolean;
@@ -101,6 +111,11 @@ function RemoveDirectory(Path: WideString): Boolean;
 
 function ForceDirectories(Path: WideString): Boolean;
 function MkDir(Path: WideString): Boolean;
+
+function GetEnvironmentVariable(Name: WideString): WideString;
+function ResolveEnvVars(Path: WideString; Callback: TEnvVarResolver; Unescape: Boolean = True): WideString; overload;
+// if Unescape = True then '%%' = '%'; this style is used in .bat'ches but not in cmd.exe directly.
+function ResolveEnvVars(Path: WideString; Unescape: Boolean = True): WideString; overload;
 
 function ReadRegValue(Root: DWord; const Path, Key: WideString): WideString;
 
@@ -723,6 +738,23 @@ begin
   Result := DeleteFileW(PWideChar(Path));
 end;
 
+function SetNtfsCompression(const FileName: WideString; Level: Word): Boolean;
+var
+  Handle, BytesReturned: DWord;
+begin
+  Result := False;
+
+  Handle := CreateFileW(PWideChar(FileName), GENERIC_READ or GENERIC_WRITE,
+                        FILE_SHARE_READ or FILE_SHARE_WRITE, NIL, OPEN_EXISTING, 0, 0);
+
+  if Handle <> INVALID_HANDLE_VALUE then
+    try
+      Result := DeviceIoControl(Handle, FSCTL_SET_COMPRESSION, @Level, SizeOf(Level), NIL, 0, BytesReturned, NIL);
+    finally
+      CloseHandle(Handle);
+    end;
+end;
+
 function CopyDirectory;
 var
   SR: TWin32FindDataW;
@@ -793,6 +825,67 @@ end;
 function MkDir(Path: WideString): Boolean;
 begin
   Result := CreateDirectoryW(PWideChar(Path), NIL)
+end;
+
+function GetEnvironmentVariable(Name: WideString): WideString;
+begin
+  SetLength(Result, $FFFF);
+  SetLength(Result, GetEnvironmentVariableW(PWideChar(Name), @Result[1], Length(Result)) );
+end;
+
+function ResolveEnvVars(Path: WideString; Callback: TEnvVarResolver; Unescape: Boolean = True): WideString;
+var
+  I, VarPos: Integer;
+  Name, Value: WideString;
+  VarExists: Boolean;
+begin
+  VarPos := 0;
+
+  for I := 1 to Length(Path) do
+    if Path = '%' then
+      if VarPos > 0 then
+      begin
+        Name := Copy(Path, VarPos + 1, I - VarPos - 2);
+
+        VarExists := True;
+        Value := Callback(Name, VarExists);
+
+        if (Name <> '') and VarExists then
+        begin
+          Result := Result + Value;
+          VarPos := 0;
+        end
+          else
+          begin
+            if Unescape and (Name = '') then
+              Result := Result + '%'
+              else
+                Result := Result + '%' + Name + '%';
+
+            VarPos := I;
+          end;
+      end
+        else
+          VarPos := I
+      else if VarPos = 0 then
+        Result := Result + Path[I];
+end;
+
+type
+  TVarResolver = class
+  public
+    class function Resolve(Name: WideString; var Exists: Boolean): WideString;
+  end;
+
+  class function TVarResolver.Resolve(Name: WideString; var Exists: Boolean): WideString;
+  begin
+    Result := GetEnvironmentVariable(Name);
+    Exists := Result <> '';
+  end;
+
+function ResolveEnvVars(Path: WideString; Unescape: Boolean = True): WideString;
+begin
+  Result := ResolveEnvVars(Path, TVarResolver.Resolve, Unescape);
 end;
 
 function ReadRegValue(Root: DWord; const Path, Key: WideString): WideString;
