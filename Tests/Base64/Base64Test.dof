@@ -91,10 +91,10 @@ ImageBase=4194304
 ExeDescription=
 [Directories]
 OutputDir=
-UnitOutputDir=.\..\..\Delphi stuff\Compiled DCUs
+UnitOutputDir=
 PackageDLLOutputDir=
 PackageDCPOutputDir=
-SearchPath=..\..\Display;..\..\Utilities;..\..\Data providers;..\..\Misc components;..\..\UniPlug;..\..\UniPlug\Plugins support;..\..\3rd party\FastShareMem;..\..\3rd party;..\..\3rd party\PNGImage;..\..\3rd party\DelphiZLib.123;..\..\Utilities\jwp_jisc;..\..\dic\Dic support
+SearchPath=..\..\Classes;..\..\Functions
 Packages=vcl;rtl;JISDialogs;indy;dsnapcon;dsnap;dbrtl;vcldb;vclx;VclSmp;adortl;bdertl;vcldbx;ibxpress;teeui;teedb;tee;dss;visualclx;visualdbclx;vclactnband;vclshlctrls;tsvnWizard_D7;MiscComponents;DicComponents
 Conditionals=
 DebugSourceDirs=
@@ -131,14 +131,17 @@ ProductName=
 ProductVersion=1.0.0.0
 Comments=
 [Excluded Packages]
+c:\program files\borland\delphi7\Projects\Bpl\Components.bpl=D7X Components
+c:\program files\borland\delphi7\Projects\Bpl\dclusr70.bpl=Borland User Components
 C:\WINDOWS\system32\ibevnt70.bpl=Borland Interbase Event Alerter Component
 [HistoryLists\hlUnitAliases]
 Count=1
 Item0=WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;
 [HistoryLists\hlSearchPath]
-Count=2
-Item0=..\..\Display;..\..\Utilities;..\..\Data providers;..\..\Misc components;..\..\UniPlug;..\..\UniPlug\Plugins support;..\..\3rd party\FastShareMem;..\..\3rd party;..\..\3rd party\PNGImage;..\..\3rd party\DelphiZLib.123;..\..\Utilities\jwp_jisc;..\..\dic\Dic support
-Item1=..\..\Display;..\..\Utilities;..\..\Data providers;..\..\Misc components;..\..\UniPlug;..\..\UniPlug\Plugins support;..\..\3rd party\FastShareMem;..\..\3rd party;..\..\3rd party\PNGImage;..\..\3rd party\DelphiZLib.123;..\..\JISDialogs\JUtils;..\..\JISDialogs\JReconvertor;..;..\..\Utilities\jwp_jisc;..\..\dic\Dic support
+Count=3
+Item0=..\..\Classes;..\..\Functions
+Item1=..\..\Display;..\..\Utilities;..\..\Data providers;..\..\Misc components;..\..\UniPlug;..\..\UniPlug\Plugins support;..\..\3rd party\FastShareMem;..\..\3rd party;..\..\3rd party\PNGImage;..\..\3rd party\DelphiZLib.123;..\..\Utilities\jwp_jisc;..\..\dic\Dic support
+Item2=..\..\Display;..\..\Utilities;..\..\Data providers;..\..\Misc components;..\..\UniPlug;..\..\UniPlug\Plugins support;..\..\3rd party\FastShareMem;..\..\3rd party;..\..\3rd party\PNGImage;..\..\3rd party\DelphiZLib.123;..\..\JISDialogs\JUtils;..\..\JISDialogs\JReconvertor;..;..\..\Utilities\jwp_jisc;..\..\dic\Dic support
 [HistoryLists\hlUnitOutputDirectory]
 Count=1
 Item0=.\..\..\Delphi stuff\Compiled DCUs
