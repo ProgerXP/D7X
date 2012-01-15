@@ -46,7 +46,7 @@ type
 // todo: use StringTypeW in RemoveNonWordChars?
 
 // unlike TryStrToInt this considers strings with leading/trailing spaces as invalid.
-function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;
+function TryStrToIntStrict(const S: String; out Value: Integer; Min: Integer = Low(Integer)): Boolean;
 function TryStrToFloatStrict(const S: String; out Value: Single;
   const FormatSettings: TFormatSettings): Boolean; overload;
 function TryStrToFloatStrict(const S: String; out Value: Double;
@@ -123,6 +123,7 @@ function CountSubstr(const Substr, Str: WideString): Integer;
 function EscapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
 function UnescapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
 function BinToHex(const Buf; Size: Integer): String;    // outputs in upper case.
+function HexToBin(Text: String): String;                // ignores char case of Text.
 
 function FormatVersion(Version: Word): WideString;
 // formats date in format $DDMMYYYY. This format is useful because it's locale-independent.
@@ -197,10 +198,10 @@ const
   StdCharsToEscape:  WideString   = '\'#13#10#9;     // don't forget to escape the EscapeChar itself.
   StdEscapedChars:   WideString   = '\rnt';
 
-function TryStrToIntStrict(const S: String; out Value: Integer): Boolean;
+function TryStrToIntStrict(const S: String; out Value: Integer; Min: Integer = Low(Integer)): Boolean;
 begin
   if (S <> '') and (S[1] > ' ') and (S[Length(S)] > ' ') then
-    Result := TryStrToInt(S, Value)
+    Result := TryStrToInt(S, Value) and (Value >= Min)
     else
       Result := False;
 end;
@@ -783,7 +784,7 @@ end;
 // String-adapted version of BinToHex from Classes.pas.
 function BinToHex(const Buf; Size: Integer): String;
 type
-  TBuf = array of Byte;
+  TBuf = array[0..MaxInt - 1] of Byte;
 const
   Convert: array[0..15] of Char = '0123456789ABCDEF';
 var
@@ -792,8 +793,32 @@ begin
   SetLength(Result, Size * 2);
   for I := 0 to Size - 1 do
   begin
-    Result[I * 2]     := Convert[TBuf(Buf)[I] shr  4];
-    Result[I * 2 + 1] := Convert[TBuf(Buf)[I] and $F];
+    Result[I * 2 + 1] := Convert[TBuf(Buf)[I] shr  4];
+    Result[I * 2 + 2] := Convert[TBuf(Buf)[I] and $F];
+  end;
+end;
+
+function HexToBin(Text: String): String;
+const
+  Convert: array['0'..'f'] of SmallInt =
+    ( 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,-1,-1,-1,-1,-1,-1,
+     -1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+     -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+     -1,10,11,12,13,14,15);
+var
+  I: Integer;
+begin
+  if Length(Text) mod 2 <> 0 then
+    raise EConvertError.CreateFmt('Hex string must have even length, %d given.', [Length(Text)]);
+
+  Text := SysUtils.LowerCase(Text);
+  SetLength(Result, Length(Text) div 2);
+
+  for I := 0 to Length(Text) div 2 - 1 do
+  begin
+    if not (Text[I * 2 + 1] in ['0'..'f']) or not (Text[I * 2 + 2] in ['0'..'f']) then
+      raise EConvertError.CreateFmt('Hex string "%s" contains wrong symbol (0-9, A-F, a-f allowed).', [Text]);
+    Result[I + 1] := Char((Convert[Text[I * 2 + 1]] shl 4) + Convert[Text[I * 2 + 2]]);
   end;
 end;
 

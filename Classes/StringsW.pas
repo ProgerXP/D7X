@@ -121,6 +121,9 @@ type
     function IsEmpty: Boolean;                     
     function Delete(Str: WideString): Boolean; overload;
     function DeleteByName(Name: WideString): Boolean;
+    function JoinNames(const Delim: WideString): WideString;
+    function JoinValues(const Delim: WideString): WideString;
+    function Join(const Delim: WideString): WideString;
   end;
 
   PStringItemW = ^TStringItemW;
@@ -240,6 +243,7 @@ type
   public
     constructor Create; overload; override;
     constructor Create(OwnsObjects: Boolean); reintroduce; overload;
+    destructor Destroy; override;
 
     function Delete(Obj: TObject): Boolean; overload;
 
@@ -1001,6 +1005,36 @@ begin
     Result.EndUpdate;
   end;
 end;
+                     
+function TStringsW.JoinNames(const Delim: WideString): WideString;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to Count - 1 do
+    Result := Result + Names[I] + Delim;
+  Result := Copy(Result, 1, Length(Result) - Length(Delim));
+end;
+
+function TStringsW.JoinValues(const Delim: WideString): WideString;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to Count - 1 do
+    Result := Result + ValueFromIndex[I] + Delim;
+  Result := Copy(Result, 1, Length(Result) - Length(Delim));
+end;
+
+function TStringsW.Join(const Delim: WideString): WideString;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to Count - 1 do
+    Result := Result + Strings[I] + Delim;
+  Result := Copy(Result, 1, Length(Result) - Length(Delim));
+end;
 
 { TStringListW }
 
@@ -1455,7 +1489,7 @@ begin
   for I := 0 to Count - 1 do
   begin
     Key := Get(I);
-    P := PosW('=', Key);
+    P := PosW(FNameValueSeparator, Key);
     if P <> 0 then
     begin
       if not CaseSensitive then
@@ -1497,6 +1531,13 @@ constructor TObjectHash.Create(OwnsObjects: Boolean);
 begin
   inherited Create;
   FOwnsObjects := OwnsObjects;
+end;                        
+
+destructor TObjectHash.Destroy;
+begin
+  if FOwnsObjects then
+    Clear;
+  inherited;
 end;
 
 procedure TObjectHash.Notify(Index: Integer; Action: TListNotification);

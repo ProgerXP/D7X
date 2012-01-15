@@ -2,11 +2,34 @@ unit Streamer;
 
 interface
 
-uses ZLibEx, Classes;
+uses Windows, SysUtils, Classes, ZLibEx;
 
 type
   TStreamFlahs = set of (ZlibbedStream, Adler32Checksummed);
   TZCompressionLevel = ZLibEx.TZCompressionLevel;
+
+  EStreamer = class (Exception)
+  end;
+
+    ENonEmptyStreamer = class (EStreamer)
+    public
+      constructor Create(ClassName: String; Op: String);
+    end;
+
+    EStreamSignature = class (EStreamer)
+    public
+      constructor Create(ClassName: String; ExpectedSign, ReadSign: WideString);
+    end;
+
+    EStreamChecksum = class (EStreamer)
+    public
+      constructor Create(ClassName: String; ExpectedChecksuim, ReadChecksum: DWord);
+    end;
+
+    EUnsupportedVersion = class (EStreamer)
+    public
+      constructor Create(ClassName: String; Version, SupportedVersion: Word);
+    end;
 
   TStreamer = class
   protected
@@ -42,11 +65,31 @@ function Adler32(Adler: LongInt; const Buf; Len: Integer): LongInt; external;
 
 implementation
 
-uses CommonExceptions, Windows;
+uses StringUtils;
 
-const
-  NonEmptyError = 'should ne used on an empty stream;  thus %s ' +
-                  'should ne called with Stream.Position = 0';
+{ Exceptions }
+
+constructor ENonEmptyStreamer.Create(ClassName: String; Op: String);
+begin
+  CreateFmt('%s.%s should be used on an empty stream (when Stream.Position = 0).', [ClassName, Op]);
+end;
+
+constructor EStreamSignature.Create(ClassName: String; ExpectedSign, ReadSign: WideString);
+begin
+  CreateFmt('%s expected to read signature "%s" but actually read "%s"', [ClassName, ExpectedSign, ReadSign])
+end;
+
+constructor EStreamChecksum.Create(ClassName: String; ExpectedChecksuim, ReadChecksum: DWord);
+begin
+  CreateFmt('%s encountered wrong checksum: expected %.8x but calculated %.8x.',
+            [ClassName, ExpectedChecksuim, ReadChecksum]);
+end;
+
+constructor EUnsupportedVersion.Create(ClassName: String; Version, SupportedVersion: Word);
+begin
+  CreateFmt('%s cannot load a stream because it''s of unsupported version %s - only supporting %s',
+            [ClassName, FormatVersion(Version), FormatVersion(SupportedVersion)]);
+end;
 
 { VersionControl }
 
@@ -63,7 +106,7 @@ var
   SpaceForChecksum: DWord;
 begin
   if Stream.Position <> 0 then
-    raise ECustom.Create(ClassName, NonEmptyError, ['WriteTo']);
+    raise ENonEmptyStreamer.Create(ClassName, 'WriteLn');
 
   Stream.Write(FSignature[1], Length(FSignature));
   Stream.Write(FVersion, SizeOf(FVersion));
@@ -72,10 +115,10 @@ begin
 
   SpaceForChecksum := 0;
   Stream.Write(SpaceForChecksum, 4); // it's not included in the header.
-end;            
+end;
 
 procedure TStreamer.PostWrite(const Stream: TStream);
-begin                
+begin
   if Adler32Checksummed in FFlags then
     WriteAdlerTo(Stream);
   if ZlibbedStream in FFlags then
@@ -105,7 +148,7 @@ begin
       FreeMem(CompressedBuf, CompressedSize);
     end;
   finally
-		FreeMem(Buf, Size);
+    FreeMem(Buf, Size);
   end;
 end;
 
@@ -116,14 +159,14 @@ var
 begin
   GetMem(Buf, Stream.Size);
   try
-		Stream.Position := 0;
-		Stream.Read(Buf^, Stream.Size);
+    Stream.Position := 0;
+    Stream.Read(Buf^, Stream.Size);
 
-		Adler := Adler32(0, Buf^, Stream.Size);
-		Stream.Position := FHeaderSize;
-		Stream.Write(Adler, 4);
+    Adler := Adler32(0, Buf^, Stream.Size);
+    Stream.Position := FHeaderSize;
+    Stream.Write(Adler, 4);
   finally
-		FreeMem(Buf, Stream.Size);
+    FreeMem(Buf, Stream.Size);
   end;
 end;
 
@@ -131,9 +174,9 @@ function TStreamer.GetStream(const Stream: TStream): TStream;
 var
   SignatureRead: String;
   VersionRead: Word;
-begin                                             
+begin
   if Stream.Position <> 0 then
-    raise ECustom.Create(ClassName, NonEmptyError, ['Validate']);
+    raise ENonEmptyStreamer.Create(ClassName, 'GetStream');
 
   SetLength(SignatureRead, Length(FSignature));
   Stream.Read(SignatureRead[1], Length(SignatureRead));
@@ -146,7 +189,7 @@ begin
 
   Stream.Read(FFlags, SizeOf(FFlags));
   FHeaderSize := Stream.Position;
-  
+
   if ZlibbedStream in FFlags then
     Result := Uncompress(Stream)
     else
@@ -178,7 +221,7 @@ begin
         Result := TMemoryStream.Create;
         Result.Size := FHeaderSize + UncompSize;
         Result.Position := 0;
-        
+
         Stream.Position := 0;
         Result.CopyFrom(Stream, FHeaderSize);
         Result.Write(Uncomp^, UncompSize);
@@ -200,7 +243,7 @@ begin
   try
     Stream.Position := 0;
     Stream.Read(Buf^, Stream.Size);
-		DWord(Ptr( DWord(Buf) + FHeaderSize )^) := 0;
+    DWord(Ptr( DWord(Buf) + FHeaderSize )^) := 0;
 
     Stream.Position := FHeaderSize;
     Stream.Read(AdlerRead, 4);
