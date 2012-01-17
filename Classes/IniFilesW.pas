@@ -47,11 +47,14 @@ type
     procedure UpdateFile; virtual; abstract;
     function ValueExists(const Section, Ident: WideString): Boolean;
 
+    function FirstSection: WideString; virtual;
     procedure ReadSections(Strings: TStrings); overload;
     procedure ReadSectionValues(const Section: WideString; Strings: TStrings;
       Clear: Boolean = True); overload;      
     procedure ReadSectionsPrefixed(Prefix: WideString; Sections: TStrings; StripPrefix: Boolean = False); overload;
     procedure ReadSectionsPrefixed(Prefix: WideString; Sections: TStringsW; StripPrefix: Boolean = False); overload;
+    procedure CopyAllFrom(Ini: TCustomIniFileW); virtual;                                                            
+    procedure CopySectionFrom(Ini: TCustomIniFileW; const Section: WideString); virtual;
   end;
 
   TMemIniFileW = class (TCustomIniFileW)
@@ -80,9 +83,11 @@ type
     procedure UpdateFile; override;
     procedure WriteString(const Section, Ident, Value: WideString); override;
     property CaseSensitive: Boolean read GetCaseSensitive write SetCaseSensitive;
-    
+    function FirstSection: WideString; override;
+
     procedure Clear; override;
-    procedure Reload; override;
+    procedure Reload; override;             
+    procedure CopyAllFrom(Ini: TCustomIniFileW); override;
   end;
 
   // TIniFileW is useful when INI is shared since it doesn't buffer data but
@@ -146,14 +151,15 @@ type
 implementation
 
 uses StringUtils, Utils, FileStreamW;
-           
+
 type
   RegVisHack = class (TRegistry)
   end;
 
 const
+  KeyValueSepar       = '=';
   // From RtlConsts.pas:
-  SIniFileWriteError = 'Unable to write to %s';
+  SIniFileWriteError  = 'Unable to write to %s';
 
 { TCustomIniFileW }
 
@@ -205,7 +211,7 @@ begin
     try
       Pos := Stream.Position;
       Stream.SetSize(Stream.Size + Length(Text) div 2);
-      HexToBin(PChar(Text), PChar(Integer(Stream.Memory) + Stream.Position), Length(Text) div 2);
+      Classes.HexToBin(PChar(Text), PChar(Integer(Stream.Memory) + Stream.Position), Length(Text) div 2);
       Stream.Position := Pos;
       if Value <> Stream then
         Value.CopyFrom(Stream, Length(Text) div 2);
@@ -284,6 +290,19 @@ begin
      ((IntStr[2] = 'X') or (IntStr[2] = 'x')) then
     IntStr := '$' + Copy(IntStr, 3, Maxint);
   Result := StrToIntDef(IntStr, Default);
+end;           
+
+function TCustomIniFileW.FirstSection: WideString;
+var
+  Sections: TStringListW;
+begin
+  Sections := TStringListW.Create;
+  try
+    ReadSections(Sections);
+    Result := Sections[0];
+  finally
+    Sections.Free;
+  end;
 end;
 
 procedure TCustomIniFileW.ReadSections(Strings: TStrings);
@@ -348,7 +367,6 @@ begin
   end;
 end;
 
-
 function TCustomIniFileW.ReadTime(const Section, Name: WideString; Default: TDateTime): TDateTime;
 var
   TimeStr: WideString;
@@ -379,8 +397,7 @@ begin
   end;
 end;
 
-function TCustomIniFileW.ValueExists(const Section,
-  Ident: WideString): Boolean;
+function TCustomIniFileW.ValueExists(const Section, Ident: WideString): Boolean;
 var
   S: TStringListW;
 begin
@@ -412,7 +429,7 @@ begin
         Stream.CopyFrom(Value, Value.Size - Value.Position);
         Stream.Position := 0;
       end;
-      BinToHex(PChar(Integer(Stream.Memory) + Stream.Position), PChar(Text),
+      Classes.BinToHex(PChar(Integer(Stream.Memory) + Stream.Position), PChar(Text),
         Stream.Size - Stream.Position);
     finally
       if Value <> Stream then
@@ -457,6 +474,36 @@ procedure TCustomIniFileW.WriteTime(const Section, Name: WideString;
   Value: TDateTime);
 begin
   WriteString(Section, Name, TimeToStr(Value));
+end;
+
+procedure TCustomIniFileW.CopyAllFrom(Ini: TCustomIniFileW);
+var
+  S: TStringListW;
+  I: Integer;
+begin
+  S := TStringListW.Create;
+  try
+    Ini.ReadSections(S);
+    for I := 0 to S.Count - 1 do
+      CopySectionFrom(Ini, S[I]);
+  finally
+    S.Free;
+  end;
+end;
+
+procedure TCustomIniFileW.CopySectionFrom(Ini: TCustomIniFileW; const Section: WideString);
+var
+  S: TStringListW;
+  I: Integer;
+begin
+  S := TStringListW.Create;
+  try
+    Ini.ReadSectionValues(Section, S);
+    for I := 0 to S.Count - 1 do
+      WriteString(Section, S.Names[I], S.ValueFromIndex[I]);
+  finally
+    S.Free;
+  end;
 end;
 
 { TMemIniFileW }
@@ -659,7 +706,7 @@ begin
   end;
 end;
 
-procedure TMemIniFileW.SeTStrings(List: TStringsW);
+procedure TMemIniFileW.SetStrings(List: TStringsW);
 var
   I, J: Integer;
   S: WideString;
@@ -670,7 +717,7 @@ begin
   for I := 0 to List.Count - 1 do
   begin
     S := Trim(List[I]);
-    if (S <> '') and (S[1] <> ';') then
+    if (S <> '') and (S[1] <> ';') and (S[1] <> '#') then
       if (S[1] = '[') and (S[Length(S)] = ']') then
       begin
         Delete(S, 1, 1);
@@ -680,9 +727,9 @@ begin
       else
         if Strings <> NIL then
         begin
-          J := PosW('=', S);
+          J := PosW(KeyValueSepar, S);
           if J > 0 then // remove spaces before and after '='
-            Strings.Add(Trim(Copy(S, 1, J-1)) + '=' + Trim(Copy(S, J+1, MaxInt)) )
+            Strings.Add(Trim(Copy(S, 1, J-1)) + KeyValueSepar + Trim(Copy(S, J+1, MaxInt)) )
           else
             Strings.Add(S);
         end;
@@ -717,12 +764,35 @@ begin
     Strings := TStringsW(FSections.Objects[I])
   else
     Strings := AddSection(Section);
-  S := Ident + '=' + Value;
+  S := Ident + KeyValueSepar + Value;
   I := Strings.IndexOfName(Ident);
   if I >= 0 then
     Strings[I] := S
   else
     Strings.Add(S);
+end;
+
+function TMemIniFileW.FirstSection: WideString;
+begin
+  Result := FSections[0];
+end;
+
+procedure TMemIniFileW.CopyAllFrom(Ini: TCustomIniFileW);
+var
+  S: TStringListW;
+begin
+  if Ini.InheritsFrom(TMemIniFileW) then
+  begin
+    S := TStringListW.Create;
+    try
+      (Ini as TMemIniFileW).GetStrings(S);
+      SetStrings(S);
+    finally
+      S.Free;
+    end;
+  end
+    else
+      inherited;
 end;
 
 { TIniFileW }
@@ -826,7 +896,7 @@ begin
         Strings.Clear;
         
       for I := 0 to KeyList.Count - 1 do
-        Strings.Add(KeyList[I] + '=' + ReadString(Section, KeyList[I], ''))
+        Strings.Add(KeyList[I] + KeyValueSepar + ReadString(Section, KeyList[I], ''))
     finally
       Strings.EndUpdate;
     end;

@@ -121,7 +121,7 @@ begin
     with Result[I] do
     begin
       VType := Pointers[I].VType;
-      if VType in [vtChar, vtString, vtPChar] then
+      if VType in [vtChar, vtAnsiString, vtPChar] then
         Str := WideString(String(PChar(Pointers[I].VPChar)))
         else if VType in [vtWideString, vtWideChar, vtPWideChar] then
           Str := PWideChar(Pointers[I].VPWideChar)

@@ -17,6 +17,7 @@ type
   TCCWriter = procedure (Str: WideString; var Context {TCCWriting}) of object;
   TCCOnUndefinedVar = function (Vars: TCCVarList; Name: WideString): WideString of object;
 
+  PCCParsingOptions = ^TCCParsingOptions;
   TCCParsingOptions = record
     Custom: Pointer;              // can be called by the caller to store arbitrary data
 
@@ -25,6 +26,8 @@ type
 
     { Settings for standard part classes (in Parts array) }
     OpenerDelimiter: WideChar;    // space, e.g. in expression "{ri "
+    AlignCenter: WideChar;        // <
+    AlignRight: WideChar;         // >
     BGSeparator: WideChar;        // @
     Repeater: WideChar;           // x; if #0 - needs none (e.g. "{55}")
     AbsFill: WideChar;            // #0
@@ -39,6 +42,7 @@ type
     Options: TCCParsingOptions;
   end;
 
+  PCCWritingOptions = ^TCCWritingOptions;
   TCCWritingOptions = record
     Custom: Pointer;              // can be called by the caller to store arbitrary data
     Handle: THandle;
@@ -84,8 +88,9 @@ type
   end;
 
   TCCVarGetter = class
-  protected           
+  protected
     FCustom: Pointer;
+
     function Get(Name: WideString): WideString; virtual; abstract;
   public
     property Variables[Name: WideString]: WideString read Get; default;
@@ -102,9 +107,9 @@ type
       function Get(Name: WideString): WideString; override;
 
       function GetCaseSensitive: Boolean;
-      function GetDuplicates: TDuplicates;
+      function GetDuplicates: TDuplicatesEx;
       procedure SetCaseSensitive(const Value: Boolean);
-      procedure SetDuplicates(const Value: TDuplicates);
+      procedure SetDuplicates(const Value: TDuplicatesEx);
     public
       constructor Create(Vars: TStringsW); overload;
       constructor Create(Vars: TStrings); overload;
@@ -112,8 +117,11 @@ type
 
       destructor Destroy; override;
 
-      property OnUndefined: TCCOnUndefinedVar read FOnUndefined;
-      property Duplicates: TDuplicates read GetDuplicates write SetDuplicates;
+      property OnUndefined: TCCOnUndefinedVar read FOnUndefined write FOnUndefined;
+      // this method is suitable for delegating OnUndefined from one TCCVarList to another.
+      function FindUndefined(Vars: TCCVarList; Name: WideString): WideString;
+
+      property Duplicates: TDuplicatesEx read GetDuplicates write SetDuplicates;
       property CaseSensitive: Boolean read GetCaseSensitive write SetCaseSensitive;
     end;
 
@@ -123,12 +131,14 @@ type
     FWritingOpt: TCCWritingOptions;
     FOriginal: WideString;
     FParts: TCCRootParts;
-                                                         
+
     class procedure Writer(Str: WideString; var Context);
-    class procedure AdvanceCoord(var Coord: TCoord; const Str: WideString);
-    
+    class procedure AdvanceCoord(var Coord: TCoord; Str: WideString);
+
     procedure Parse(const ParsingOpt: TCCParsingOptions);
   public
+    class function Quote(const Str: WideString; const ParsingOpt: TCCParsingOptions): WideString;
+
     constructor Create(const Str: WideString; const ParsingOpt: TCCParsingOptions);
     destructor Destroy; override;
 
@@ -157,6 +167,7 @@ type
     // Result characters it will be split in two.
     function PrecedingTextLength: Integer; virtual;
     function Splitable: Boolean; virtual;
+    function PlainText: WideString; virtual;
 
     procedure Write(var Context: TCCWriting); virtual;
     // Iterations is 1-based.
@@ -174,6 +185,7 @@ type
       // MaxLength can be negative to split from the end.
       function Split(MaxLength: Integer): TCCTextPart;
       function Splitable: Boolean; override;
+      function PlainText: WideString; override;
 
       procedure Write(var Context: TCCWriting); override;
     end;
@@ -198,6 +210,7 @@ type
     public
       destructor Destroy; override;
 
+      function PlainText: WideString; override;
       procedure Write(var Context: TCCWriting); override;
     end;
 
@@ -210,7 +223,7 @@ type
       end;
 
       TCCGroupPart = class (TCCParts)
-      public                                         
+      public
         class function TryParsing(var Context: TCCParsing): TCCPart; override;
         constructor Create(var Context: TCCParsing);
       end;
@@ -230,6 +243,17 @@ type
           procedure Write(var Context: TCCWriting); override;
         end;
 
+        TCCAlignedPart = class (TCCGroupPart)
+        protected
+          FAlign: TAlignment;
+          FPadChar: WideChar;
+
+          procedure Parse(var Context: TCCParsing); override;
+        public
+          class function TryParsing(var Context: TCCParsing): TCCPart; override;
+          procedure Write(var Context: TCCWriting); override;
+        end;
+
     TCCRepeatingPart = class (TCCPart)
     protected
       procedure EnsureFollowsAnyPart(const Context: TCCWriting);
@@ -244,6 +268,8 @@ type
         class function TryParsing(var Context: TCCParsing): TCCPart; override;
 
         constructor Create(Repeats: Integer);
+
+        function PlainText: WideString; override;
         function Repeats(var Context: TCCWriting; Iterations: Integer): Boolean; override;
       end;
 
@@ -264,6 +290,7 @@ type
       FVar: WideString;
     public
       class function TryParsing(var Context: TCCParsing): TCCPart; override;
+
       constructor Create(const VarName: WideString);
       procedure Write(var Context: TCCWriting); override;
     end;
@@ -275,6 +302,7 @@ var
 procedure WriteColored(const Str: Widestring; Cache: Boolean = True); overload;  // uses default options.
 procedure WriteColored(const Str: Widestring; const ParsingOpt: TCCParsingOptions;
   const WritingOpt: TCCWritingOptions; Cache: Boolean = True); overload;
+function CCQuote(const Str: WideString; const Opt: TCCParsingOptions): WideString;
 
 function ParseCC(const Str: Widestring; const Opt: TCCParsingOptions): TCCParsedStr;
 procedure OutputCC(const ParsedStr: TCCParsedStr; const Opt: TCCWritingOptions);
@@ -282,7 +310,7 @@ function DefaultCCWriter: TCCWriter;
 function DefaultCCVars: TCCVarList;
 
 implementation
-       
+
 const
   LineLen = 80;
 
@@ -309,10 +337,13 @@ procedure WriteColored(const Str: Widestring; const ParsingOpt: TCCParsingOption
     Move(Str[1], Result[OptSize + 1], Length(Str) * 2);
   end;
 
-var          
+var
   Hash: WideString;
   I: Integer;
 begin
+  if Length(Str) = 0 then
+    Exit;
+
   if Cache then
   begin
     if CCCache = NIL then
@@ -336,6 +367,11 @@ begin
         finally
           Free;
         end;
+end;
+
+function CCQuote(const Str: WideString; const Opt: TCCParsingOptions): WideString;
+begin
+  Result := TCCParsedStr.Quote(Str, Opt);
 end;
 
 function ParseCC(const Str: Widestring; const Opt: TCCParsingOptions): TCCParsedStr;
@@ -381,7 +417,7 @@ begin
   with Context do
     CreateFmt(Text, [Format(Msg, Fmt), Str, Pos, Copy(Str, Pos, 20)]);
 end;
-                       
+
 { TCCVarList }
 
 constructor TCCVarList.Create(Vars: TStringsW);
@@ -401,8 +437,8 @@ constructor TCCVarList.Create(Vars: array of const);
   begin
     with Vars[I] do
       case VType of
-      vtAnsiString,
-      vtString:     Result := VPChar;
+      vtPChar,
+      vtAnsiString: Result := VPChar;
       vtPWideChar,
       vtWideString: Result := VPWideChar;
       vtChar:       Result := VChar;
@@ -469,7 +505,7 @@ begin
   Result := FList.CaseSensitive;
 end;
 
-function TCCVarList.GetDuplicates: TDuplicates;
+function TCCVarList.GetDuplicates: TDuplicatesEx;
 begin
   Result := FList.Duplicates;
 end;
@@ -479,9 +515,14 @@ begin
   FList.CaseSensitive := Value;
 end;
 
-procedure TCCVarList.SetDuplicates(const Value: TDuplicates);
+procedure TCCVarList.SetDuplicates(const Value: TDuplicatesEx);
 begin
   FList.Duplicates := Value;
+end;
+
+function TCCVarList.FindUndefined(Vars: TCCVarList; Name: WideString): WideString;
+begin
+  Result := Variables[Name];
 end;
 
 { TCCPostWriters }
@@ -554,30 +595,55 @@ begin
   end;
 end;
 
-class procedure TCCParsedStr.AdvanceCoord(var Coord: TCoord; const Str: WideString);
+class procedure TCCParsedStr.AdvanceCoord(var Coord: TCoord; Str: WideString);
 const
-  LF = #13;
+  CR = #13;
+  LF = #10;
 var
   I: Integer;
-begin
-  for I := 1 to Length(Str) do
-    if Str[I] = LF then
+
+  procedure FlushX;
+  begin
+    if Coord.X >= LineLen then
     begin
+      Inc(Coord.Y, Coord.X div LineLen);
+      Coord.X := Coord.X mod LineLen;
+    end;
+  end;
+
+begin
+  Str := StrReplace(Str, CR + LF, LF, [rfReplaceAll]);
+
+  for I := 1 to Length(Str) do
+    if (Str[I] = LF) or (Str[I] = CR) then
+    begin
+      FlushX;
       Coord.X := 0;
       Inc(Coord.Y);
     end
       else
         Inc(Coord.X);
 
-  if Coord.X >= LineLen then
-  begin
-    Inc(Coord.Y, Coord.X div LineLen);
-    Coord.X := Coord.X mod LineLen;
-  end;
+  FlushX;
 end;
-                             
+
+class function TCCParsedStr.Quote(const Str: WideString; const ParsingOpt: TCCParsingOptions): WideString;
+var
+  I: Integer;
+begin
+  Result := Str;
+
+  with ParsingOpt do
+    for I := Length(Result) downto 1 do
+      if (Result[I] = Opener) or (Result[I] = Closer) then
+        Insert(Opener, Result, I);
+end;
+
 constructor TCCParsedStr.Create(const Str: WideString; const ParsingOpt: TCCParsingOptions);
-begin                                       
+begin
+  if Length(Str) = 0 then
+    raise EColorConsole.Create('Empty string to output using ColorConsole.');
+
   FOriginal := Str;
   FParts := NIL;
 
@@ -585,7 +651,7 @@ begin
 end;
 
 destructor TCCParsedStr.Destroy;
-begin                                                   
+begin
   if FParts <> NIL then
     FParts.Free;
 
@@ -595,7 +661,7 @@ end;
 procedure TCCParsedStr.Parse(const ParsingOpt: TCCParsingOptions);
 begin
   if FParts <> NIL then
-    FParts.Free;
+    FreeAndNIL(FParts);
 
   FParsingOpt := ParsingOpt;
   FParts := TCCRootParts.StartParsing(FOriginal, ParsingOpt);
@@ -646,7 +712,7 @@ var
   Pos: Integer;
 begin
   Result := GetPrefixedSpec(Context, Prefix, Inner, Pos) and TryStrToIntStrict(Inner, Num, +1);
-  if Result then        
+  if Result then
     Context.Pos := Pos;
 end;
 
@@ -686,11 +752,14 @@ procedure TCCPart.WriteStrTo(var Context: TCCWriting; const Str: WideString);
 var
   Func: TCCWriter;
 begin
-  Func := Context.Options.Writer;
-  if not Assigned(Func) then
-    raise ECCWriting.CreateFmt('CC-Writer callback is not assigned; writing string "%s".', [Str]);
+  if Str <> '' then
+  begin
+    Func := Context.Options.Writer;
+    if not Assigned(Func) then
+      raise ECCWriting.CreateFmt('CC-Writer callback is not assigned; writing string "%s".', [Str]);
 
-  Func(Str, Context);
+    Func(Str, Context);
+  end;
 end;
 
 function TCCPart.Repeats(var Context: TCCWriting; Iterations: Integer): Boolean;
@@ -702,12 +771,22 @@ procedure TCCPart.ExitWrite;
 begin
 end;
 
+function TCCPart.PlainText: WideString;
+begin
+  Result := '';
+end;
+
 { TCCTextPart }
 
 constructor TCCTextPart.Create(const Text: WideString);
 begin
   Init;
   FText := Text;
+end;
+
+function TCCTextPart.PlainText: WideString;
+begin
+  Result := FText;
 end;
 
 function TCCTextPart.Split(MaxLength: Integer): TCCTextPart;
@@ -749,7 +828,7 @@ procedure TCCParts.Write(var Context: TCCWriting);
         Break;
 
       if Part.InheritsFrom(TCCRepeatingPart) and (PartI > 0) then
-        WritePart(PartI - 1);  
+        WritePart(PartI - 1);
       Part.Write(Context);
 
       Inc(Iterations);
@@ -829,7 +908,7 @@ var
     Part: TCCPart;
     I: Integer;
   begin
-    Inc(Context.Pos);         
+    Inc(Context.Pos);
     FlushPlain;
 
     with Context.Options do
@@ -855,7 +934,7 @@ begin
   StartPos := Context.Pos;
 
   while True do
-    if Context.Pos > Length(Context.Str) then  
+    if Context.Pos > Length(Context.Str) then
       if FNeedsCloser then
         raise ECCParsing.Create(Context, 'unclosed %sspec%s (opened at %d)', [Context.Options.Opener, Context.Options.Closer, StartPos])
         else
@@ -881,9 +960,15 @@ begin
 
   FlushPlain;
   FOriginal := Copy(Context.Str, StartPos, Context.Pos - StartPos - Byte(FNeedsCloser));
+end;
 
-  if FParts.Count = 0 then
-    raise ECCParsing.Create(Context, 'group %sspec%s contains no child parts', [Context.Options.Opener, Context.Options.Closer]);
+function TCCParts.PlainText: WideString;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to FParts.Count - 1 do
+    Result := Result + (FParts[I] as TCCPart).PlainText;
 end;
 
 { TCCRootParts }
@@ -920,7 +1005,7 @@ begin
     FreeAndNIL(Context.PostWriters);
   end;
 end;
-                 
+
 procedure TCCRootParts.InitContext(var Context: TCCWriting);
 var
   Info: TConsoleScreenBufferInfo;
@@ -962,7 +1047,7 @@ begin
       else
         Result := NIL;
 end;
-               
+
 class function TCCColorPart.ValidColorFlags: WideString;
 begin
   Result := 'rgbiwymc';
@@ -1034,6 +1119,51 @@ begin
     FillConsoleOutputAttribute(Context.Options.Handle, FAttrs, Len, Start, Written);
 end;
 
+{ TCCAlignedPart }
+
+class function TCCAlignedPart.TryParsing(var Context: TCCParsing): TCCPart;
+begin
+  with Context do
+    if (Str[Pos] = Options.AlignCenter) or (Str[Pos] = Options.AlignRight) then
+      Result := Self.Create(Context)
+      else
+        Result := NIL;
+end;
+
+procedure TCCAlignedPart.Parse(var Context: TCCParsing);
+begin
+  if Context.Str[Context.Pos] = Context.Options.AlignCenter then
+    FAlign := taCenter
+    else
+      FAlign := taRightJustify;
+
+  Inc(Context.Pos);
+
+  if Copy(Context.Str, Context.Pos + 1, 1) = Context.Options.OpenerDelimiter then
+  begin
+    FPadChar := Context.Str[Context.Pos];
+    Inc(Context.Pos, 2);
+  end
+    else
+      FPadChar := ' ';
+
+  inherited;
+end;
+
+procedure TCCAlignedPart.Write(var Context: TCCWriting);
+var
+  Padding: WideString;
+begin
+  if FAlign = taCenter then
+    Padding := StrRepeat(FPadChar, (LineLen - Length(PlainText)) div 2)
+    else
+      Padding := StrRepeat(FPadChar, LineLen - Length(PlainText));
+
+  WriteStrTo(Context, Padding);
+
+  inherited;
+end;
+
 { TCCRepeatingPart }
 
 procedure TCCRepeatingPart.EnsureFollowsAnyPart(const Context: TCCWriting);
@@ -1072,6 +1202,11 @@ begin
   Result := FRepeats > Iterations;
 end;
 
+function TCCRepeatPart.PlainText: WideString;
+begin
+  Result := StrRepeat(' ', FRepeats);
+end;
+
 { TCCAbsFillPart }
 
 class function TCCAbsFillPart.TryParsing(var Context: TCCParsing): TCCPart;
@@ -1104,7 +1239,7 @@ procedure TCCAbsFillPart.ExitWrite;
 begin
   FLastY := -1;
 end;
-                  
+
 { TCCHexCharPart }
 
 class function TCCHexCharsPart.TryParsing(var Context: TCCParsing): TCCPart;
@@ -1136,7 +1271,7 @@ begin
 
   for I := 0 to Length(Hexes) - 1 do
   begin
-    if Length(Hexes[I]) > 4 then                 
+    if Length(Hexes[I]) > 4 then
       with Context, Options do
         raise ECCParsing.Create(Context, LongCode, [ Hexes[I], Opener, HexChar, Closer, Hex, Length(Hexes[I]), 4 ]);
 
@@ -1153,7 +1288,7 @@ begin
   SetLength(Result, Length(Buf) div 2);
   Move(Buf[1], Result[1], Length(Buf));
 end;
-         
+
 function TCCHexCharsPart.Splitable: Boolean;
 begin
   Result := False;
@@ -1190,7 +1325,7 @@ begin
 end;
 
 initialization
-  CCVars := TCCVarList.Create(['NL', #10#13, 'TAB', #9]); 
+  CCVars := TCCVarList.Create(['NL', #13#10, 'TAB', #9]);
 
   with CCParsing do
   begin
@@ -1201,19 +1336,22 @@ initialization
 
     OpenerDelimiter := ' ';
     BGSeparator := '@';
+    AlignCenter := '<';
+    AlignRight := '>';
     Repeater := 'x';
     AbsFill := #0;
     HexChar := '#';
     NextHexChar := '#';
     Variable := #0;
 
-    SetLength(Parts, 6);
+    SetLength(Parts, 7);
     Parts[0] := TCCGroupPart;
     Parts[1] := TCCColorPart;
-    Parts[2] := TCCRepeatPart;
-    Parts[3] := TCCAbsFillPart;
-    Parts[4] := TCCHexCharsPart;
-    Parts[5] := TCCVarPart;
+    Parts[2] := TCCAlignedPart;
+    Parts[3] := TCCRepeatPart;
+    Parts[4] := TCCAbsFillPart;
+    Parts[5] := TCCHexCharsPart;
+    Parts[6] := TCCVarPart;
   end;
 
   with CCWriting do

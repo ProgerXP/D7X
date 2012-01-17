@@ -12,7 +12,7 @@ unit SQLite;
 
 interface
 
-uses Classes, Contnrs, SysUtils, Windows, StringsW, FileStreamW, Utils;
+uses Classes, Contnrs, SysUtils, Windows, StringsW, FileStreamW, StringUtils, Utils;
 
 const
   { Result codes: }
@@ -348,6 +348,11 @@ type
           constructor Create(const Msg: WideString);
         end;
 
+        ESQLiteBindZeroIndexParam = class (ESQLiteBind)
+        public
+          constructor Create;
+        end;
+
       ESQLiteResultToRecord = class (ESQLiteQuery)
       public
         constructor Create(Reason: WideString);
@@ -584,13 +589,19 @@ type
 
     // Values has 2 forms: [True, name, value[, name, value, ...]] and [value[, value, ...]]
     // the first form addresses named params, the second - indexed
-    // unless <name> starts with "?" an error is raised if value with given name isn't defined
-    // <value> can be Integer, Double/Extended, Char/WideString (BindTextTo), String (BindBlobTo),
+    // unless <name> starts with "?" an error is raised if value with given name isn't defined.
+    // if <name> starts with "!" the following <value> is passed to BindBlobTo; it must
+    //           be of type ShortString, String or PChar).
+    // if <name> starts with neither ':', '@' nor '$' the leading ':' is prepended.
+    // <value> can be Integer, Double/Extended, PChar/String/PWideChar/WideString (BindTextTo),
     //         NIL Pointer (BindNullTo), TStream object (BindBlobTo).
+    // It's not possible to bind index and named parameters in one call to Bind.
     procedure Bind(Values: array of const);
     procedure CheckBindRes(const Param: WideString; Status: Integer); overload;
     procedure CheckBindRes(Param: Integer; Status: Integer); overload;
 
+      { Parameter indexes are 1-based in SQLite thus 0 is an invalid index. }
+      { Don't forget about named parameter prefixes (':', '@', '$') - e.g. ':a_param'. }
       procedure BindDoubleTo(const Param: WideString; Value: Double); overload;
       procedure BindDoubleTo(Param: Integer; Value: Double); overload;
       procedure BindIntegerTo(const Param: WideString; Value: Int64); overload;
@@ -1064,6 +1075,11 @@ begin
   ESQLite(Self).Create( -1, WideFormat('TSQLiteQuery.Bind was passed %s', [Msg]) );
 end;
 
+constructor ESQLiteBindZeroIndexParam.Create;
+begin
+  ESQLite(Self).Create( -1, 'Attempted to bind a parameter with index 0 but SQLite parameters are 1-based.');
+end;
+
 constructor ESQLiteOpenTableBlob.Create(Code: Integer; const DB, Table, Field: WideString; RowID: Int64);
 begin
   Self.DB := DB;
@@ -1500,14 +1516,13 @@ begin
 end;
 
 function TSQLiteDatabase.TableNames: TStringsW;
-var
-  Tables: TStringListW;
 begin
-  Tables := TStringListW.Create;
+  Result := TStringListW.Create;
   try
-    Result := Tables.NameList;
-  finally
-    Tables.Free;
+    TablesOf('main', Result);
+  except
+    Result.Free;
+    raise;
   end;
 end;
 
@@ -1998,9 +2013,10 @@ var
   UseNames: Boolean;
 begin
   if Length(Values) = 0 then
-    SQLiteRaise(FDatabase, ESQLiteBindValues.Create('empty Values'));
+    Exit;
 
   StartI := 0;
+  UseNames := False;
   if Values[0].VType = vtBoolean then
   begin
     Inc(StartI);
@@ -2012,14 +2028,30 @@ begin
     if Length(Values) mod 2 <> 1 then
       SQLiteRaise(FDatabase, ESQLiteBindValues.Create('invalid Values count in named params mode'));
 
-    for I := StartI to Length(Values) - 2 do
+    I := StartI;
+    while I <= Length(Values) - 2 do
     begin
       with Values[I] do
       begin
-        if (VType <> vtString) or (VPChar = '') or (VPChar = '?') then
+        if (VType <> vtAnsiString) or (TrimLeft(VPChar, '?!:@$') = '') then
           SQLiteRaise(FDatabase, ESQLiteBindValues.Create('invalid name in named param mode'));
 
         ParamName := VPChar;
+
+        if ParamName[1] = '!' then
+        begin
+          Delete(ParamName, 1, 1);
+
+          with Values[I + 1] do
+            if VType in [vtAnsiString, vtPChar] then
+              BindBlobTo(ParamName, String(VPChar))
+              else if VType = vtString then
+                BindBlobTo(ParamName, VString^)
+                else
+                  SQLiteRaise(FDatabase, ESQLiteBindValues.Create('blob-name must be followed by value of type ShortString, String or PChar'));
+
+          Continue;
+        end;
 
         if ParamName[1] = '?' then
         begin
@@ -2029,12 +2061,17 @@ begin
         end;
       end;
 
+      if not (Char( ParamName[1] ) in [':', '@', '$']) then
+        Insert(':', ParamName, 1);
+
       with Values[I + 1] do
         case VType of
         vtInteger:      BindIntegerTo(ParamName, VInteger);
         vtExtended:     BindDoubleTo(ParamName, VExtended^);
         vtChar:         BindTextTo(ParamName, VChar);
-        vtString:       BindBlobTo(ParamName, String(VPChar));
+        vtPChar,
+        vtAnsiString:   BindTextTo(ParamName, VPChar);
+        vtPWideChar,
         vtWideString:   BindTextTo(ParamName, VPWideChar);
         else
           if (VType = vtPointer) and (VPointer = NIL) then
@@ -2044,22 +2081,26 @@ begin
               else
                 SQLiteRaise(FDatabase, ESQLiteBindValues.Create('invalid VType of a param value in named param mode'));
         end;
-    end
+
+      Inc(I, 2);
+    end;
   end
     else
       for I := StartI to Length(Values) - 1 do
         with Values[I] do
           case VType of
-          vtInteger:      BindIntegerTo(I - StartI, VInteger);
-          vtExtended:     BindDoubleTo(I - StartI, VExtended^);
-          vtChar:         BindTextTo(I - StartI, VChar);
-          vtString:       BindBlobTo(I - StartI, String(VPChar));
-          vtWideString:   BindTextTo(I - StartI, VPWideChar);
+          vtInteger:      BindIntegerTo(1 + I - StartI, VInteger);
+          vtExtended:     BindDoubleTo(1 + I - StartI, VExtended^);
+          vtChar:         BindTextTo(1 + I - StartI, VChar);
+          vtPChar,
+          vtAnsiString:   BindTextTo(1 + I - StartI, VPChar);
+          vtPWideChar,
+          vtWideString:   BindTextTo(1 + I - StartI, VPWideChar);
           else
             if (VType = vtPointer) and (VPointer = NIL) then
-              BindNullTo(I - StartI)    
+              BindNullTo(1 + I - StartI)
               else if (VType = vtObject) and (VObject <> NIL) and VObject.InheritsFrom(TStream) then
-                BindBlobTo(I - StartI, VObject as TStream)
+                BindBlobTo(1 + I - StartI, VObject as TStream)
                 else
                   SQLiteRaise(FDatabase, ESQLiteBindValues.Create('invalid VType of a param value in index param mode'));
           end;
@@ -2067,8 +2108,10 @@ end;
 
 procedure TSQLiteQuery.CheckBindRes(Param, Status: Integer);
 begin
-  if Status <> SQLITE_OK then
-    SQLiteRaise(FDatabase, ESQLiteBind.Create(Status, Param));
+  if Param < 1 then
+    SQLiteRaise(FDatabase, ESQLiteBindZeroIndexParam.Create)
+    else if Status <> SQLITE_OK then
+      SQLiteRaise(FDatabase, ESQLiteBind.Create(Status, Param));
 end;
 
   procedure TSQLiteQuery.CheckBindRes(const Param: WideString; Status: Integer);
@@ -2089,7 +2132,7 @@ end;
 
 procedure TSQLiteQuery.BindIntegerTo(Param: Integer; Value: Int64);
 begin
-    CheckBindRes(Param, sqlite3_bind_int64(FHandle, Param, Value));
+  CheckBindRes(Param, sqlite3_bind_int64(FHandle, Param, Value));
 end;
 
   procedure TSQLiteQuery.BindIntegerTo(const Param: WideString; Value: Int64);
@@ -2309,7 +2352,8 @@ end;
           if Kind = sqText then
           begin
             Text := UTF8Decode(Blob);
-            Blob := '';
+            if UpperCase(DeclType) <> 'BLOB' then
+              Blob := '';
           end;
         end;
       end;
@@ -2368,6 +2412,7 @@ begin
 
         case Fields[I].VType of
         vtInteger:      Col := Column(Fields[I ].VInteger);
+        vtPChar,
         vtAnsiString:   Col := Column(String( Fields[I ].VPChar ));
         else
           SQLiteRaise(FDatabase, ESQLiteResultToRecord.Create('type of <col> item is neither vtInteger nor vtPChar'));

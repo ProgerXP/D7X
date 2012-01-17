@@ -60,11 +60,14 @@ function IntToBin(Int: Byte): String; overload
 function IntToBin(Int: Word): String; overload
 function IntToBin(Int: DWord; Digits: Byte = 32; SpaceEach: Byte = 8): String; overload;
 
-procedure WriteWS(const Stream: TStream; const Str: WideString);
+// returns number of bytes written.
+function WriteWS(const Stream: TStream; const Str: WideString): Word;
 procedure WriteArray(const Stream: TStream; const WSArray: array of WideString); overload;
 procedure WriteArray(const Stream: TStream; const DWArray: array of DWord); overload;
 
-function ReadWS(const Stream: TStream): WideString;
+// returns number of bytes read.
+function ReadWS(const Stream: TStream): WideString; overload;
+function ReadWS(const Stream: TStream; out Len: Word): WideString; overload;
 procedure ReadArray(const Stream: TStream; var WSArray: array of WideString); overload;
 procedure ReadArray(const Stream: TStream; var DWArray: array of DWord); overload;
 
@@ -411,13 +414,13 @@ begin
     Insert(' ', Result, Digits - Int * SpaceEach + 1)
 end;
 
-procedure WriteWS(const Stream: TStream; const Str: WideString);
-var
-  Len: Word;
+function WriteWS(const Stream: TStream; const Str: WideString): Word;
 begin
-  Len := Length(Str);
-  Stream.Write(Len, SizeOf(Len));
-  Stream.Write(Str[1], Len * 2)
+  Result := Length(Str);
+  Stream.Write(Result, SizeOf(Result));
+  Stream.Write(Str[1], Result * 2);
+
+  Result := Result * 2 + SizeOf(Result);
 end;
 
 procedure WriteArray(const Stream: TStream; const WSArray: array of WideString);
@@ -439,9 +442,16 @@ function ReadWS(const Stream: TStream): WideString;
 var
   Len: Word;
 begin
+  Result := ReadWS(Stream, Len);
+end;
+
+function ReadWS(const Stream: TStream; out Len: Word): WideString;
+begin
   Stream.Read(Len, 2);
   SetLength(Result, Len);
-  Stream.Read(Result[1], Len * 2)
+  Stream.Read(Result[1], Len * 2);
+
+  Len := Len * 2 + SizeOf(Len);
 end;
 
 procedure ReadArray(const Stream: TStream; var WSArray: array of WideString);
@@ -842,10 +852,10 @@ begin
   VarPos := 0;
 
   for I := 1 to Length(Path) do
-    if Path = '%' then
+    if Path[I] = '%' then
       if VarPos > 0 then
       begin
-        Name := Copy(Path, VarPos + 1, I - VarPos - 2);
+        Name := Copy(Path, VarPos + 1, I - VarPos - 1);
 
         VarExists := True;
         Value := Callback(Name, VarExists);

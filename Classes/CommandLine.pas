@@ -2,28 +2,44 @@ unit CommandLine;
 
 interface
 
-{ This unit is standalone. }
-
-uses Windows, SysUtils, Math, Classes, StringUtils, Utils, StringsW;
+uses Classes, Windows, SysUtils, Math, FileStreamW, StringsW, IniFIlesW, ColorConsole,
+     StringUtils, Utils;
 
 const
   MaxCLArgs = $7FFF;
 
 type
+  TCLAppLang = class;
+
   TCLWaitOnExit = (clAlwaysWait, clWaitOnError, clNeverWait);
   TCLItemType = (clShortOptions, clLongOption, clArgument);
+
+  TCLOnUndefinedLang = function (Lang: TCLAppLang; Str: WideString): WideString of object;
 
   ECommandLine = class (Exception)
   end;
 
-    ECLTooFewArguments = class (ECommandLine)
+    ECLUnknownTask = class (ECommandLine)
+    public
+      Task: WideString;
+      constructor Create(const Task: WideString);
     end;
 
-      ECLTooFewTaskArgs = class (ECLTooFewArguments)
+    ECLMissingParam = class (ECommandLine)
+    end;
+
+      ECLTooFewTaskArgs = class (ECLMissingParam)
       public
         Task: WideString;
-        Required: Integer;  // 1-based
-        constructor Create(const Task: WideString; Required: Integer);
+        RequiredCount: Integer;
+
+        constructor Create(const Task: WideString; RequiredCount: Integer);
+      end;
+
+      ECLNoRequiredTaskOption = class (ECLMissingParam)
+      public
+        Task, Option: WideString;
+        constructor Create(const Task, Option: WideString);
       end;
 
   TCLHash = class (THash)
@@ -87,13 +103,38 @@ type
     class procedure RunTests;  // debug method.
   end;
 
-  TCLApplicationLanguage = record
-    UnknownTask, WaitOnExit: WideString;
-    Exception, FewTaskArgs: WideString;
+  TCLAppLang = class (THash)
+  protected
+    F_EOLN: WideString;
+    FOnUndefined: TCLOnUndefinedLang;
+
+    function GetTr(What: WideString): WideString;
+    procedure SetTr(What: WideString; const Value: WideString);
+  public
+    constructor Create; override;
+
+    procedure AddDefaultStrings;
+    procedure SetDefaultStrings; virtual;
+
+    function LoadIniFromResource(const Name: WideString; Lang: Word = 0): TMemIniFileW;
+    function ExtendedIniToSimple(const Ext: WideString): WideString;
+    // if Section isn't found the first section in the INI file is used.
+    procedure LoadFromResource(const Name: WideString; Lang: Word = 0;
+      Section: WideString = 'Console');
+    function AddObject(const S: WideString; AObject: TObject): Integer; override;
+
+    procedure LoadFromIniFile(const FN: WideString; Section: WideString = 'Console');
+
+    property EOLN: WideString read F_EOLN write F_EOLN;
+    property OnUndefined: TCLOnUndefinedLang read FOnUndefined;
+    property Translate[What: WideString]: WideString read GetTr write SetTr; default;
+
+    function Format(const What: WideString; Fmt: array of const): WideString;
   end;
 
   TCLApplication = class
   protected
+    FLang: TCLAppLang;
     F_EOLN: WideString;
     FWaitOnExit: TCLWaitOnExit;
 
@@ -104,20 +145,26 @@ type
     FCLParser: TCLParser;
     FExitCode: Integer;
 
-    function IsConsoleHandle(Handle: DWord): Boolean;
-      procedure WriteStringTo(Handle: DWord; const Str: WideString);
-        procedure ErrorWrite(const Str: WideString);
-          procedure ErrorWriteLn(const Str: WideString = '');
-        procedure ConsoleWrite(const Str: WideString);
-          procedure ConsoleWriteLn(const Str: WideString = '');
+    procedure Init; virtual;
+
+    // will convert standalone LFs into CRLF pairs if F_EOLN = CRLF.
+    procedure WriteStringTo(Handle: DWord; Str: WideString); virtual;
+    function IsConsoleHandle(Handle: DWord = 0): Boolean;
+    function NormalizeWritingStr(const Str: WideString): WideString;
+
+      procedure ConsoleWrite(const Str: WideString);
+      procedure ConsoleWriteLn(const Str: WideString = '');
+      procedure ErrorWrite(const Str: WideString);
+      procedure ErrorWriteLn(const Str: WideString = '');
+
     procedure ConsoleWaitForEnter;
     procedure ConsoleGoUpOneLine;
 
     function TryDoingTask(Task: WideString): Boolean; virtual;    // Task is not an alias
     function DoStandardTask(Task: WideString): Boolean;           // Task is not an alias
-    procedure UnknownTaskPassed(const Task: WideString);
     procedure BeforeExit; virtual;
 
+    function CreateLang: TCLAppLang; virtual;
     function FormatVersion: WideString;
     function FormatDate: WideString;
     function GetConsoleXY(IncY: SmallInt): TCoord;
@@ -129,6 +176,7 @@ type
     procedure SetProgressPrecision(Value: Byte);
     function GetTaskAlias(Alias: WideString): WideString;
     procedure SetTaskAlias(ALias: WideString; const Value: WideString);
+    procedure SetEOLN(const Value: WideString);
   public
     Name, Author: WideString;
     Version: Word;
@@ -136,14 +184,12 @@ type
     BuildDate: DWord;
 
     Help, HelpDetails: WideString;
-    Language: TCLApplicationLanguage;
 
     constructor Create; virtual;
     destructor Destroy; override;
 
-    procedure SetDefaultLanguage;
     procedure Clear;
-    procedure SetDefaults; virtual; abstract;
+    procedure SetInfo; virtual; abstract;
 
     property RanOK: Boolean read GetRanOK write SetRanOK default False;
     property ExitCode: Integer read FExitCode write FExitCode default 1;
@@ -151,7 +197,8 @@ type
     function TaskAliasIfAnyFor(const Task: WideString): WideString;
 
     property CommandLine: TCLParser read FCLParser;
-    property EOLN: WideString read F_EOLN write F_EOLN;
+    property Language: TCLAppLang read FLang;
+    property EOLN: WideString read F_EOLN write SetEOLN;
     property ProgressPrecision: Byte read FProgressPrecision write SetProgressPrecision default 1;
     property WaitOnExit: TCLWaitOnExit read FWaitOnExit write FWaitOnExit default clWaitOnError;
     function IsNakedTask(Task: WideString): Boolean; virtual;
@@ -164,10 +211,26 @@ type
 
     function TaskArg(const Task: WideString; Index: Integer = 0): WideString;
 
-    procedure OutputHeader;
-      function GetHeader: WideString; virtual;
+    procedure OutputHeader; virtual;
+      function GetHeader: TWideStringArray; virtual;
     procedure OutputVersion;
     procedure OutputHelp(Detailed: Boolean = False);
+  end;
+
+  TCLColorApplication = class (TCLApplication)
+  protected
+    FCCParsing: TCCParsingOptions;
+    FCCWriting: TCCWritingOptions;
+
+    procedure Init; override;
+    function CreateLang: TCLAppLang; override;
+
+    procedure WriteStringTo(Handle: DWord; Str: WideString); override;
+  public
+    destructor Destroy; override;
+
+    procedure OutputHeader; override;
+    procedure HandleException(E: Exception); override;
   end;
 
 implementation
@@ -177,10 +240,26 @@ var
 
 { Exceptions }
 
-constructor ECLTooFewTaskArgs.Create(const Task: WideString; Required: Integer);
+constructor ECLUnknownTask.Create(const Task: WideString);
+begin
+  CreateFmt('Unknown task passed (%s).', [Task]);
+  Self.Task := Task;
+end;
+
+constructor ECLTooFewTaskArgs.Create(const Task: WideString; RequiredCount: Integer);
 begin
   Self.Task := Task;
-  Self.Required := Required;
+  Self.RequiredCount := RequiredCount;
+
+  CreateFmt('"%s" task requires at least %d arguments.', [Task, RequiredCount]);
+end;
+
+constructor ECLNoRequiredTaskOption.Create(const Task, Option: WideString);
+begin
+  Self.Task := Task;
+  Self.Option := Option;
+
+  CreateFmt('"%s" task requires "%s" option.', [Task, Option]);
 end;
 
 { TCLHash }
@@ -502,9 +581,252 @@ begin
   end;
 end;
 
+{ TCLAppLang }
+
+constructor TCLAppLang.Create;
+begin
+  inherited;
+  CaseSensitive := True;
+
+  SetDefaultStrings;
+end;
+
+procedure TCLAppLang.SetDefaultStrings;
+begin
+  Clear;
+  AddDefaultStrings;
+end;
+
+procedure TCLAppLang.AddDefaultStrings;
+begin
+  Translate['header 1'] := '~ %s%s~%s%s';
+  Translate['header line prefix'] := '  ';
+  Translate['header 2'] := '%s';
+  Translate['author'] := 'by %s';
+  Translate['header joiner'] := ', ';
+
+  Translate['exception'] := StringOfChar('-', 80) +
+                            '  Oops! An <%s> exception has occured. Here''s what it says:' + F_EOLN +
+                            '%s' + F_EOLN + 'Exception address: %.8X';
+  Translate['error: unknown task'] := 'Unknown task "%s" specified.';
+  Translate['error: no task argument'] := '"%s" task requires at least %d arguments.';
+  Translate['error: no task option'] := '"%s" task requires "%s" option.';
+
+  Translate['wait on exit'] := '______________________' + F_EOLN +
+                               'Press Enter to exit...';
+  Translate['progress'] := '  [ %.$f%% ]... %s';
+  Translate['version'] := '%s  v%s';
+end;
+
+function TCLAppLang.GetTr(What: WideString): WideString;
+var
+  I: Integer;
+begin
+  I := IndexOfName(What);
+
+  if I = -1 then
+    if Assigned(FOnUndefined) then
+      Result := FOnUndefined(Self, What)
+      else
+        Result := What
+    else
+      Result := ValueFromIndex[I];
+end;
+
+procedure TCLAppLang.SetTr(What: WideString; const Value: WideString);
+begin
+  Add(What + NameValueSeparator + Value);
+end;
+
+function TCLAppLang.Format(const What: WideString; Fmt: array of const): WideString;
+begin
+  Result := WideFormat(Translate[What], Fmt);
+end;
+
+function TCLAppLang.LoadIniFromResource(const Name: WideString; Lang: Word = 0): TMemIniFileW;
+  procedure Error;
+  begin
+    raise EResNotFound.CreateFmt('Resource "%s" (language %.4X) to load language strings from doesn''t exist.', [Name, Lang]);
+  end;
+
+var
+  ResInfo: HRSRC;
+  Handle: HGLOBAL;
+  Buf: String;
+begin
+  ResInfo := FindResourceExW(hInstance, PWideChar(RT_RCDATA), PWideChar(Name), Lang);
+
+  Handle := LoadResource(hInstance, ResInfo);
+  if Handle = 0 then
+    Error;
+
+  try
+    SetLength(Buf, SizeOfResource(hInstance, ResInfo));
+    if Length(Buf) = 0 then
+      Error;
+
+    Result := TMemIniFileW.Create;
+    try
+      CopyMemory(@Buf[1], LockResource(Handle), Length(Buf));
+      Result.LoadFromString( ExtendedIniToSimple(UTF8Decode(Buf)) );
+    except
+      Result.Free;
+      raise;
+    end;
+  finally
+    UnlockResource(Handle);
+    FreeResource(Handle);
+  end;
+end;
+
+function TCLAppLang.ExtendedIniToSimple(const Ext: WideString): WideString;
+type
+  TFolding = (flNone, flWithNewlines, flNoNewlines);
+const
+  NL = '{NL}';
+var
+  Strings: TStringListW;
+  Index, FoldStart: Integer;
+  S, Folded: WideString;
+  Folding: TFolding;
+
+  procedure EndFolding;
+  var
+    I: Integer;
+  begin
+    if Folding <> flNone then
+    begin
+      Strings[FoldStart] := Strings[FoldStart] + Folded;
+
+      for I := Index - 1 downto FoldStart + 1 do
+        Strings.Delete(I);
+
+      Index := FoldStart;
+      Folding := flNone;
+      Folded := '';
+    end;
+  end;
+
+begin
+  Strings := TStringListW.Create;
+  try
+    Strings.Text := Ext;
+    Folding := flNone;
+
+    Index := 0;
+    while Index < Strings.Count do
+    begin
+      if Folding <> flNone then
+        if (Copy(Strings[Index], 1, 2) = '  ') or (Strings[Index] = '') then
+        begin
+          if (Folded <> '') and (Folding = flWithNewlines) then
+            Folded := Folded + NL;
+
+          Folded := Folded + Copy(Strings[Index], 3, Length(Strings[Index]));
+        end
+          else
+          begin
+            if Folding = flWithNewlines then
+              Folded := Copy(Folded, 1, Length(Folded) - Length(NL));
+            EndFolding;
+          end;
+
+      if (Folding = flNone) and
+         (Index < Strings.Count - 1) and (Copy(Strings[Index + 1], 1, 2) = '  ') then
+      begin
+        S := TrimRight(Strings[Index]);
+        if CountSubstr(NameValueSeparator, S) = 1 then
+          if S[Length(S)] = NameValueSeparator then
+            Folding := flWithNewlines
+            else if S[Length(S)] = '>' then
+            begin
+              Folding := flNoNewlines;
+              Strings[Index] := Copy(S, 1, Length(S) - 1);
+            end;
+
+        if Folding <> flNone then
+        begin
+          FoldStart := Index;
+          Folded := '';
+        end;
+      end;
+
+      Inc(Index);
+    end;
+
+    EndFolding;
+
+    Strings.LineBreak := F_EOLN;
+    Result := Strings.Text;
+  finally
+    Strings.Free;
+  end;
+end;
+
+procedure TCLAppLang.LoadFromResource(const Name: WideString; Lang: Word;
+  Section: WideString);
+var
+  Ini: TMemIniFileW;
+begin
+  Ini := LoadIniFromResource(Name, Lang);
+  try
+    if not Ini.SectionExists(Section) then
+      Section := Ini.FirstSection;
+
+    Ini.ReadSectionValues(Section, Self, False);
+  finally
+    Ini.Free;
+  end;
+end;
+
+function TCLAppLang.AddObject(const S: WideString; AObject: TObject): Integer;
+begin
+  Result := IndexOfName(ExtractName(S));
+  if Result = -1 then
+    Result := inherited AddObject(S, AObject)
+    else
+    begin
+      Strings[Result] := S;
+      Objects[Result] := AObject;
+    end;
+end;
+
+procedure TCLAppLang.LoadFromIniFile(const FN: WideString; Section: WideString);
+var
+  Ini: TMemIniFileW;
+begin
+  Ini := TMemIniFileW.Create;
+  try
+    Ini.LoadFromString( ExtendedIniToSimple(TFileStreamW.LoadUnicodeFrom(FN)) );
+
+    if not Ini.SectionExists(Section) then
+      Section := Ini.FirstSection;
+
+    Ini.ReadSectionValues(Section, Self, False);
+  finally
+    Ini.Free;
+  end;
+end;
+
 { TCLApplication }
 
 constructor TCLApplication.Create;
+begin
+  Init;
+  Clear;
+  SetInfo;
+end;
+
+destructor TCLApplication.Destroy;
+begin
+  FLang.Free;
+  FCLParser.Free;
+  FTaskAliases.Free;
+
+  inherited;
+end;
+
+procedure TCLApplication.Init;
 begin
   F_EOLN := #13#10;
   FProgressPrecision := 1;
@@ -513,27 +835,7 @@ begin
   FCLParser := TCLParser.Create;
   RanOK := False;
 
-  SetDefaultLanguage;
-  Clear;
-
-  SetDefaults;
-end;
-
-destructor TCLApplication.Destroy;
-begin
-  FCLParser.Free;
-  FTaskAliases.Free;
-  inherited;
-end;
-
-procedure TCLApplication.SetDefaultLanguage;
-begin
-  Language.UnknownTask := 'Unknown task "%s" specified.';
-  Language.Exception := StringOfChar('-', 80) +
-                        '  Oops! Some <%s> exception has occured. Here''s what it says:' + F_EOLN + '%s';
-  Language.FewTaskArgs := 'Argument #%d is required for task "%s".';
-  Language.WaitOnExit := '______________________' + F_EOLN +
-                          'Press Enter to exit...';
+  FLang := CreateLang;
 end;
 
 procedure TCLApplication.Clear;
@@ -554,41 +856,62 @@ begin
 end;
 
 procedure TCLApplication.OutputHeader;
+var
+  Lines: TWideStringArray;
+  S: WideString;
 begin
-  ConsoleWriteLn( GetHeader );
+  Lines := GetHeader;
+
+  if IsConsoleHandle then
+    S := StrPad(Lines[0], 80) + WideFormat('%80s', [Lines[1]])
+    else
+      S := Lines[0] + F_EOLN + WideFormat('%80s', [Lines[1]]);
+
+  ConsoleWriteLn(S);
 end;
 
-function TCLApplication.GetHeader: WideString;
+function TCLApplication.GetHeader: TWideStringArray;
   function SecondLine: WideString;
   begin
     if Author <> '' then
-    begin
-      Result := '  by ' + Author;
-      if BuildDate <> 0 then
-        Result := Result + ',';
-    end;
+      Result := FLang.Format('author', [Author]);
 
     if BuildDate <> 0 then
-      Result := Result + ' ' + FormatDate;
+      if Result = '' then
+        Result := Result + FLang['header line prefix'] + FormatDate
+        else
+          Result := Result + FLang['header joiner'] + FormatDate;
   end;
 
+  function Pad(const S: WideString): WideString;
+  begin
+    Result := S;
+    if S <> '' then
+      Insert(' ', Result, 1);
+  end;
+
+var
+  Ver: WideString;
 begin
-  Result := '~ ' + Name + ' ';
-  if Version <> 0 then
-    Result := Result + FormatVersion + ' ';
-  Result := Result + '~ ';
+  if Version = 0 then
+    Ver := ''
+    else
+      Ver := ' ' + FormatVersion;
 
-  if WWW <> '' then
-    Result := Result + ' ' + WWW + ' ';
-  if Email <> '' then
-    Result := Result + ' ' + Email + ' ';
+  SetLength(Result, 2);
+  Result[0] := FLang.Format('header 1', [Name, Ver, Pad(WWW), Pad(Email)]);
+  Result[1] := FLang.Format('header 2', [SecondLine]);
+end;
 
-  Result := WideFormat('%-79s' + F_EOLN + '%80s', [Result, SecondLine]);
+function TCLApplication.CreateLang: TCLAppLang;
+begin
+  Result := TCLAppLang.Create;
+  Result.EOLN := F_EOLN;
 end;
 
 function TCLApplication.FormatVersion: WideString;
 begin
-  Result := Format('%d.%d', [Hi(Version), Lo(Version)]);
+  Result := WideFormat('%d.%d', [Hi(Version), Lo(Version)]);
 end;
 
 function TCLApplication.FormatDate: WideString;
@@ -613,9 +936,9 @@ begin
 
   if Task = FCLParser.NotPassed then
     OutputHelp(False)
-    else if Task = 'h' then
+    else if Task = 'help' then
       OutputHelp(True)
-      else if Task = 'v' then
+      else if Task = 'version' then
         OutputVersion
         else
           Result := False;
@@ -623,20 +946,14 @@ end;
 
 procedure TCLApplication.OutputHelp(Detailed: Boolean = False);
 begin
-  ConsoleWrite(Help);
-  RanOK := False;
-
+  ConsoleWriteLn(Help);
   if Detailed then
-  begin
-    ConsoleWriteLn;
-    ConsoleWrite(HelpDetails);
-  end;
+    ConsoleWriteLn(HelpDetails);
 end;
 
 procedure TCLApplication.ErrorWriteLn(const Str: WideString);
 begin
-  ErrorWrite(Str);
-  ErrorWrite(F_EOLN);
+  ErrorWrite(Str + F_EOLN);
 end;
 
 procedure TCLApplication.ErrorWrite(const Str: WideString);
@@ -646,8 +963,7 @@ end;
 
 procedure TCLApplication.ConsoleWriteLn(const Str: WideString = '');
 begin
-  ConsoleWrite(Str);
-  ConsoleWrite(F_EOLN);
+  ConsoleWrite(Str + F_EOLN);
 end;
 
 procedure TCLApplication.ConsoleWrite(const Str: WideString);
@@ -655,20 +971,39 @@ begin
   WriteStringTo(StdOut, Str);
 end;
 
-procedure TCLApplication.WriteStringTo(Handle: DWord; const Str: WideString);
+procedure TCLApplication.WriteStringTo(Handle: DWord; Str: WideString);
 var
   WrittenCount: DWord;
 begin
+  Str := NormalizeWritingStr(Str);
+
   if IsConsoleHandle(Handle) then
     WriteConsoleW(Handle, @Str[1], Length(Str), WrittenCount, NIL)
     else
       WriteFile(Handle, Str[1], Length(Str) * 2, WrittenCount, NIL);
 end;
 
-function TCLApplication.IsConsoleHandle(Handle: DWord): Boolean;
-begin
-  Result := GetFileType(Handle) = FILE_TYPE_CHAR;
-end;
+  function TCLApplication.NormalizeWritingStr(const Str: WideString): WideString;
+  const
+    CR = #13;
+    LF = #10;
+  var
+    I: Integer;
+  begin
+    Result := Str;
+
+    if F_EOLN = CR + LF then
+      for I := Length(Result) downto 1 do
+        if (Result[I] = LF) and ((I = 1) or (Result[I - 1] <> CR)) then
+          Insert(CR, Result, I);
+  end;
+
+  function TCLApplication.IsConsoleHandle(Handle: DWord): Boolean;
+  begin
+    if Handle = 0 then
+      Handle := StdOut;
+    Result := GetFileType(Handle) = FILE_TYPE_CHAR;
+  end;
 
 procedure TCLApplication.ConsoleWaitForEnter;
 var
@@ -704,8 +1039,9 @@ procedure TCLApplication.UpdateProgress(Current, Max: DWord; Extra: WideString =
 var
   Str: WideString;
 begin
-  Str := Format( '  [ %.' + IntToStr(FProgressPrecision) + 'f%% ]... ',
-                [Current / Max * 100] ) + Extra;
+  Str := FLang.Format('progress bar', [Current / Max * 100, Extra]);
+  Str := StrReplace(Str, '$', IntToStr(FProgressPrecision), [rfReplaceAll]);
+
   if Str <> FLastProgress then
   begin
     if FLastProgress <> '' then
@@ -766,12 +1102,32 @@ procedure TCLApplication.HandleException(E: Exception);
 var
   Msg: WideString;
 begin
-  if E.InheritsFrom(ECLTooFewTaskArgs) then
-    Msg := WideFormat(Language.FewTaskArgs, [ECLTooFewTaskArgs(E).Task, ECLTooFewTaskArgs(E).Required + 1])
-    else
-      Msg := WideFormat(Language.Exception, [E.ClassName, E.Message]);
+  Msg := '';
 
-  ConsoleWrite(Msg);
+  if E.InheritsFrom(ECLUnknownTask) then
+  begin
+    RanOK := False;
+
+    ConsoleWriteLn( FLang.Format('error: unknown task', [ECLUnknownTask(E).Task]) );
+    ConsoleWriteLn;
+    OutputHelp;
+  end
+    else
+    begin
+      if E.InheritsFrom(ECLTooFewTaskArgs) then
+        with ECLTooFewTaskArgs(E) do
+          Msg := FLang.Format('error: no task argument', [Task, RequiredCount])
+      else if E.InheritsFrom(ECLNoRequiredTaskOption) then
+        with ECLNoRequiredTaskOption(E) do
+          Msg := FLang.Format('error: no task option', [Task, Option])
+      else
+        Msg := FLang.Format('exception', [E.ClassName, E.Message, DWord(ExceptAddr)]);
+
+      Msg := Msg + F_EOLN;
+    end;
+
+  if Msg <> '' then
+    ConsoleWriteLn(Msg);
 end;
 
 function TCLApplication.GetCLString: WideString;
@@ -802,14 +1158,7 @@ begin
   Task := TaskAliasIfAnyFor(Task);
 
   if not TryDoingTask(Task) then
-    UnknownTaskPassed(Task);
-end;
-
-procedure TCLApplication.UnknownTaskPassed(const Task: WideString);
-begin
-  ConsoleWriteLn( WideFormat(Language.UnknownTask, [Task]) );
-  ConsoleWriteLn;
-  OutputHelp;
+    raise ECLUnknownTask.Create(Task);
 end;
 
 procedure TCLApplication.BeforeExit;
@@ -817,19 +1166,21 @@ begin
   if ((FWaitOnExit = clAlwaysWait) or ((FWaitOnExit = clWaitOnError) and not RanOK)) and IsConsolehandle(StdOut) then
   begin
     ConsoleWriteLn;
-    ConsoleWriteLn;
-    ConsoleWrite(Language.WaitOnExit);
+    ConsoleWrite(FLang['wait on exit']);
     ConsoleWaitForEnter;
   end;
 end;
 
 procedure TCLApplication.OutputVersion;
+var
+  Ver: WideString;
 begin
-  ConsoleWrite(Name + '  v');
   if Version = 0 then
-    ConsoleWrite( FormatDate )
+    Ver := FormatDate
     else
-      ConsoleWrite( FormatVersion );
+      Ver := FormatVersion;
+
+  ConsoleWrite( FLang.Format('version', [Name, Ver]) );
 end;
 
 function TCLApplication.GetTaskAlias(Alias: WideString): WideString;
@@ -840,6 +1191,12 @@ end;
 procedure TCLApplication.SetTaskAlias(ALias: WideString; const Value: WideString);
 begin
   FTaskAliases.Values[Alias] := Value;
+end;
+
+procedure TCLApplication.SetEOLN(const Value: WideString);
+begin
+  F_EOLN := Value;
+  FLang.EOLN := Value;
 end;
 
 function TCLApplication.TaskAliasIfAnyFor(const Task: WideString): WideString;
@@ -871,6 +1228,79 @@ begin
   Result := FCLParser.Arguments[Index];
   if Result = FCLParser.NotPassed then
     raise ECLTooFewTaskArgs.Create(Task, Index);
+end;
+
+{ TCLColorApplication }
+
+procedure TCLColorApplication.Init;
+begin
+  inherited;
+
+  FCCParsing := CCParsing;
+  FCCWriting := CCWriting;
+
+  FCCWriting.VarGetter := TCCVarList.Create(['SP', ' ']);
+  (FCCWriting.VarGetter as TCCVarList).OnUndefined := (CCWriting.VarGetter as TCCVarList).FindUndefined;
+end;
+
+function TCLColorApplication.CreateLang: TCLAppLang;
+begin
+  Result := inherited CreateLang;
+
+  Result['header 1'] := '{w@b {<{wi@bi  %s%s }%s%s {80}}}';
+  Result['header 2'] := '{>{y %s}}';
+  Result['author'] := 'by {yi %s}';
+
+  Result['exception'] := '{@r -{80}}' +
+                         '{@r  {wi@ri  Oops! An {ri  %s } exception has occured. Here''s what it says: {79}} }' +
+                         '{@r -{80}}' +
+                         '{wi %s}{NL}' +
+                         '{wi@r Exception address: {wi@ri %.8X}{NL}}';;
+  Result['error: unknown task'] := '{ri >} Unknown task {ri %s} specified.';
+  Result['error: no task argument'] := '{ri >} {wi %s} task requires at least {ri %d} {wi arguments}.';
+  Result['error: no task option'] := '{ri >} {wi %s} task requires {ri %s} option.';
+
+  Result['wait on exit'] := '{i ______________________}{NL}Press {wi Enter} to exit...';
+  Result['progress'] := '  [ {wi %.$f%%} ]... {wi %s}';
+  Result['version'] := '{yi %s}  {y v%s}';
+end;
+
+destructor TCLColorApplication.Destroy;
+begin
+  FCCWriting.VarGetter.Free;
+  inherited;
+end;
+
+procedure TCLColorApplication.OutputHeader;
+var
+  Lines: TWideStringArray;
+  S: WideString;
+begin
+  Lines := GetHeader;
+
+  if IsConsoleHandle then
+    S := Join(Lines, '')
+    else
+      S := Join(Lines, F_EOLN);
+
+  ConsoleWriteLn(S);
+end;
+
+procedure TCLColorApplication.WriteStringTo(Handle: DWord; Str: WideString);
+var
+  WritingOpt: TCCWritingOptions;
+begin
+  WritingOpt := FCCWriting;
+  WritingOpt.Handle := Handle;
+
+  Str := NormalizeWritingStr(Str);
+  WriteColored(Str, FCCParsing, FCCWriting);
+end;
+
+procedure TCLColorApplication.HandleException(E: Exception);
+begin
+  E.Message := CCQuote(E.Message, FCCParsing);
+  inherited HandleException(E);
 end;
 
 initialization

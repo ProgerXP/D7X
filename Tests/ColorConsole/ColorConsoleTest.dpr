@@ -19,9 +19,9 @@ begin
     end;
   end;
 end;
-                          
+
 const
-  TestStrings: array[0..10] of String = (
+  TestStrings: array[0..12] of String = (
     '{w@b  {10}{wi@b ColorConsole demo} :: {yi@b http://proger.i-forge.net/ColorConsole}{NL}}',
     'Hello, {wi world}!',
     'Escaped: {}, {{, {ri {}}',
@@ -30,9 +30,12 @@ const
     'Repeat {x20}20 times',
     '| Abs-X fill to 45th char {45}| useful for tables |',
     '-{80}{i A ruler:}  {wi 1234567890}{80}-{80}',
-    '-{79}'#10#13'{i Checking forced newlines:}    {wi .}{79}{NL}-{79}',
+    '-{79}'#13#10'{i Checking forced newlines:}    {wi .}{79}{NL}-{79}',
     'Nested {@ri red bk ={x2} {g green text}} - normal here.',
-    '{i@ Repeating & nested {wi -{70}}}{x2}');
+    '{i@ Repeating & nested {wi -{70}}}{x2}',
+
+    '{NL}{gi {g ***} Bug-tests {g ***}}',
+    '{@wi ----------------------------------------------------------------------------------------------------'#$D#$A'===}');
 var
   I: Integer;
 begin

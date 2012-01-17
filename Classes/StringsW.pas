@@ -7,7 +7,7 @@ interface
 uses FileStreamW, Classes, Windows, SysUtils;
 
 type                                      
-  TDuplicates = Classes.TDuplicates;
+  TDuplicatesEx = (dupIgnore, dupAccept, dupReplace, dupError);
   TListAssignOp = Classes.TListAssignOp;
   TListSortCompare = Classes.TListSortCompare;
   TListNotification = Classes.TListNotification;
@@ -142,7 +142,7 @@ type
     FCount: Integer;
     FCapacity: Integer;
     FSorted: Boolean;
-    FDuplicates: TDuplicates;
+    FDuplicates: TDuplicatesEx;
     FCaseSensitive: Boolean;
     FOnChange: TNotifyEvent;
     FOnChanging: TNotifyEvent;
@@ -178,7 +178,7 @@ type
     procedure InsertObject(Index: Integer; const S: WideString; AObject: TObject); override;
     procedure Sort; virtual;
     procedure CustomSort(Compare: TStringListSortCompare); virtual;
-    property Duplicates: TDuplicates read FDuplicates write FDuplicates;
+    property Duplicates: TDuplicatesEx read FDuplicates write FDuplicates;
     property Sorted: Boolean read FSorted write SetSorted;
     property CaseSensitive: Boolean read FCaseSensitive write SetCaseSensitive;
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
@@ -343,6 +343,10 @@ begin
   end
     else if Source is TStrings then
     begin
+      NameValueSeparator := WideChar( TStrings(Source).NameValueSeparator );
+      QuoteChar := WideChar( TStrings(Source).QuoteChar );
+      Delimiter := WideChar( TStrings(Source).Delimiter );
+
       BeginUpdate;
       try
         Clear;
@@ -866,9 +870,18 @@ end;
 
 function TStringsW.GetValueFromIndex(Index: Integer): WideString;
 begin
-  if Index >= 0 then
-    Result := Copy(Get(Index), Length(Names[Index]) + 2, MaxInt) else
-    Result := '';
+  if Index < 0 then
+    Result := ''
+    else
+    begin
+      Result := Get(Index);
+
+      if Result <> '' then
+        if Result[1] = NameValueSeparator then
+          Result := Copy(Result, 2, MaxInt)
+          else
+            Result := Copy(Result, Length( ExtractName(Result) ) + 2, MaxInt);
+    end;
 end;
 
 procedure TStringsW.SetValueFromIndex(Index: Integer; const Value: WideString);
@@ -1063,7 +1076,11 @@ begin
         dupIgnore: Exit;
         dupError: Error(SDuplicateString, 0);
       end;
-  InsertItem(Result, S, AObject);
+
+  if Duplicates = dupReplace then
+    PutObject(Result, AObject)
+    else
+      InsertItem(Result, S, AObject);
 end;
 
 procedure TStringListW.Changed;
@@ -1489,7 +1506,7 @@ begin
   for I := 0 to Count - 1 do
   begin
     Key := Get(I);
-    P := PosW(FNameValueSeparator, Key);
+    P := PosW(NameValueSeparator, Key);
     if P <> 0 then
     begin
       if not CaseSensitive then

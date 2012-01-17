@@ -281,7 +281,6 @@ begin
     Inc(Current);
 
   SetLength(Result, Current + 1);
-
 end;
 
 function Explode(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
@@ -1337,7 +1336,7 @@ initialization
 
       SetLength(Measures, 4);
       Measures[0].Capacity := 1024;
-      Measures[0].Measure := 'bytes';
+      Measures[0].Measure := 'B';
       Measures[1].Capacity := 1024;
       Measures[1].Measure := 'Kb';
       Measures[2].Capacity := 1024;
