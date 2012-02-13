@@ -124,6 +124,15 @@ object RPNitForm: TRPNitForm
     TabOrder = 6
     OnClick = Button4Click
   end
+  object cbPrefix: TCheckBox
+    Left = 96
+    Top = 32
+    Width = 105
+    Height = 17
+    Caption = 'Prefix notation'
+    TabOrder = 7
+    OnClick = cbPrefixClick
+  end
   object od: TOpenDialog
     DefaultExt = 'lst'
     Filter = 'Text files (*.lst; *.txt)|*.lst; *.txt|All files|*.*'

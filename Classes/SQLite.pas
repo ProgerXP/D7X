@@ -845,12 +845,12 @@ procedure sqlite3_reset_auto_extension; cdecl; external SQLiteDLL;
 
 function SQLiteErrorMsg(Err: Integer; Msg: PPChar): string;
 procedure SQLiteExec(DB: PPointer; const S: string);
-{ IfEmpty: SQLite would behave differently depending on NIL or '' PChar - for example,
-           sqlite3_open_v2(, , , VFS='') would always fail while sqlite3_open_v2(, , , VFS=NIL) won't. }
+{ Note: SQLite would behave differently depending on NIL or '' PChar - for example,
+        sqlite3_open_v2(, , , VFS='') would always fail while sqlite3_open_v2(, , , VFS=NIL) won't. }
 { WARNING: do not use 2 overloaded functions under the same name (e.g. SQLiteStr both for
            wide and ANSI inputs) - Delphi will often confuse which one to use and this
            will lead to some very tricky bugs!                                            }
-function ToSQLiteStr(const Wide: WideString; IfEmpty: PChar = NIL): PChar;
+function ToSQLiteStr(const Wide: WideString): String;
 function FromSQLiteStr(UTF8: PChar): WideString;
 function SQLiteType(Kind: Integer): TSQLiteType;
 procedure SQLiteRaise(DB: Pointer; E: ESQLite); overload;
@@ -864,6 +864,7 @@ const
 implementation
 
 type
+  Sqpc = type Pointer;
   // used in TSQLiteResult.ToRecord/s:
   TRec = array[0..$1000000 {16 MiB}] of Byte;
 
@@ -888,20 +889,14 @@ begin
     SQLiteRaise(DB, ESQLite.Create(Res, Error));
 end;
 
-function ToSQLiteStr(const Wide: WideString; IfEmpty: PChar = NIL): PChar;
+function ToSQLiteStr(const Wide: WideString): String;
 begin
-  if Length(Wide) = 0 then
-    Result := IfEmpty
-    else
-      Result := PChar(UTF8Encode(Wide));
+  Result := UTF8Encode(Wide);
 end;
 
 function FromSQLiteStr(UTF8: PChar): WideString;
 begin
-  if Length(UTF8) = 0 then
-    Result := ''
-    else
-      Result := UTF8Decode(UTF8);
+  Result := UTF8Decode(UTF8);
 end;
 
 function SQLiteType(Kind: Integer): TSQLiteType;
@@ -1148,7 +1143,7 @@ end;
 
 class function TSQLite.HasCompileOption(const Name: WideString): Boolean;
 begin
-  Result := sqlite3_compileoption_used(ToSQLiteStr(Name));
+  Result := sqlite3_compileoption_used(Sqpc(ToSQLiteStr(Name)));
 end;
 
 class function TSQLite.CompileOptions(WithPrefix: Boolean = False): TStrings;
@@ -1261,7 +1256,7 @@ begin
           vtPWideChar,
           vtWideString:
             begin
-              Strings[StrI] := ToSQLiteStr(VPWideChar, '') + #0;
+              Strings[StrI] := ToSQLiteStr(VPWideChar);
               VA[I] := @Strings[StrI][1];
               Inc(StrI);
             end;
@@ -1272,7 +1267,7 @@ begin
                 raise ESQLiteUnsupportedPrintfArg.Create(VType);
           end;
 
-  Res := sqlite3_vmprintf(ToSQLiteStr(Format, ''), VA);
+  Res := sqlite3_vmprintf(Sqpc(ToSQLiteStr(Format)), VA);
   Result := FromSQLiteStr(Res);
   sqlite3_free(Res);
 end;
@@ -1306,7 +1301,7 @@ end;
 
 class function TSQLite.StrIComp(const S1, S2: WideString): Integer;
 var
-  S1Enc, S2Enc: PChar;
+  S1Enc, S2Enc: String;
 begin
   S1Enc := ToSQLiteStr(S1);
   S2Enc := ToSQLiteStr(S2);
@@ -1315,7 +1310,7 @@ begin
   if Result > Length(S2Enc) then
     Result := Length(S2Enc);
 
-  Result := sqlite3_strnicmp(S1Enc, S2Enc, Result);
+  Result := sqlite3_strnicmp(Sqpc(S1Enc), Sqpc(S2Enc), Result);
 end;
 
 { TSQLiteDatabase }
@@ -1403,7 +1398,7 @@ begin
   FOpenFlags := Flags;
   FOpenVFS := VFS;
 
-  Error := sqlite3_open_v2(ToSQLiteStr(FN), FHandle, Flags, ToSQLiteStr(VFS));
+  Error := sqlite3_open_v2(Sqpc(ToSQLiteStr(FN)), FHandle, Flags, Sqpc(ToSQLiteStr(VFS)));
   if Error <> SQLITE_OK then
   begin
     Close;
@@ -1722,7 +1717,7 @@ var
   Code: Integer;
   Msg: PChar;
 begin
-  Code := sqlite3_load_extension(FHandle, ToSQLiteStr(FN), ToSQLiteStr(EntryPoint), @Msg);
+  Code := sqlite3_load_extension(FHandle, Sqpc(ToSQLiteStr(FN)), Sqpc(ToSQLiteStr(EntryPoint)), @Msg);
   if Code <> SQLITE_OK then
     SQLiteRaise(Self, ESQLiteLoadingExtension.Create(Code, @Msg, FN, EntryPoint));
 end;
@@ -1854,8 +1849,8 @@ var
   Error: Integer;
   Handle: Pointer;
 begin
-  Error := sqlite3_blob_open(FDatabase.Handle, ToSQLiteStr(DB), ToSQLiteStr(FName),
-                             ToSQLiteStr(Field), RowID, Integer(not ReadOnly), Handle);
+  Error := sqlite3_blob_open(FDatabase.Handle, Sqpc(ToSQLiteStr(DB)), Sqpc(ToSQLiteStr(FName)),
+                             Sqpc(ToSQLiteStr(Field)), RowID, Integer(not ReadOnly), Handle);
 
   if Error = SQLITE_OK then
     Result := TSQLiteBlob.Acquire(Handle)
@@ -1915,7 +1910,7 @@ begin
 
   if FNextSQL <> '' then
   begin
-    Error := sqlite3_prepare_v2(FDatabase.FHandle, ToSQLiteStr(FNextSQL), -1, Result, Tail);
+    Error := sqlite3_prepare_v2(FDatabase.FHandle, Sqpc(ToSQLiteStr(FNextSQL)), -1, Result, Tail);
 
     if (Error = SQLITE_OK) and (Result <> NIL) then
       FNextSQL := Tail
@@ -2152,12 +2147,12 @@ end;
 
 procedure TSQLiteQuery.BindTextTo(Param: Integer; const Value: WideString);
 begin
-  CheckBindRes(Param, sqlite3_bind_text(FHandle, Param, ToSQLiteStr(Value), -1, SQLITE_TRANSIENT));
+  CheckBindRes(Param, sqlite3_bind_text(FHandle, Param, Sqpc(ToSQLiteStr(Value)), -1, SQLITE_TRANSIENT));
 end;
 
   procedure TSQLiteQuery.BindTextTo(const Param: WideString; const Value: WideString);
   begin
-    CheckBindRes(Param, sqlite3_bind_text(FHandle, ParamIndex(Param), ToSQLiteStr(Value), -1, SQLITE_TRANSIENT));
+    CheckBindRes(Param, sqlite3_bind_text(FHandle, ParamIndex(Param), Sqpc(ToSQLiteStr(Value)), -1, SQLITE_TRANSIENT));
   end;
 
 procedure TSQLiteQuery.BindBlobTo(Param: Integer; const Buf; Size: Integer);
@@ -2225,7 +2220,7 @@ end;
 
   function TSQLiteQuery.ParamIndex(const Param: WideString): Integer;
   begin
-    Result := sqlite3_bind_parameter_index(FHandle, ToSQLiteStr(Param));
+    Result := sqlite3_bind_parameter_index(FHandle, Sqpc(ToSQLiteStr(Param)));
   end;
 
 function TSQLiteQuery.HasParam(const Param: WideString): Boolean;

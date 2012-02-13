@@ -57,6 +57,8 @@ type
     destructor Destroy; override;
 
     property Handle: DWord read FHandle;
+    property ID: DWord read FThreadID;
+    function IsCurrent: Boolean;    // returns True if the caller is running as the ThreadID.
     function Running: Boolean;
     function HasFinished: Boolean;
     function ExitCode: DWord;
@@ -68,9 +70,11 @@ type
     procedure Run;
     procedure SetArguments(const Arguments: TProcArguments);
     procedure Kill(ExitCode: DWord = DWord(-1));
+
     procedure Wait;
     // in seconds. Has effect only before Wait is called.
     property TimeOut: DWord read FTimeOut write FTimeOut default 60;
+    function WaitFor(MSec: DWord): Boolean;   // returns True if thread has ended.
   end;
 
   TMMTimer = class
@@ -159,8 +163,8 @@ begin
         if Assigned(OnException) then
           Result := OnException(Caller, Args, E)
           else
-            {Ignore - because if an exception is uncaught in a thread proc lot of strange
-             errors (Application error, Access violation, etc.) may arise.}
+            {Ignore - because if an exception is uncaught in a thread proc lots of strange
+             errors (Application Error, Access Violation, etc.) may arise.}
             Result := 1;
     end;
 end;
@@ -249,7 +253,7 @@ begin
         TimeOut := timeGetTime + FTimeOut * 1000;
 
     while not HasFinished do
-      if timeGetTime > TimeOut then   
+      if timeGetTime > TimeOut then
       begin
         Kill(TimeOutExitCode);
         // although this should make HasFinished return True on next iteration that's not
@@ -286,6 +290,16 @@ begin
   FSettings.OnException := Value;
 end;
 
+function TSingleThread.WaitFor(MSec: DWord): Boolean;
+begin
+  Result := (WaitForSingleObject(FHandle, MSec) = WAIT_OBJECT_0) and HasFinished;
+end;
+
+function TSingleThread.IsCurrent: Boolean;
+begin
+  Result := GetCurrentThreadID = FThreadID;
+end;
+
 { TMMTimer }
 
 constructor TMMTimer.Create;
@@ -306,7 +320,7 @@ constructor TMMTimer.Create(ObjectProc: TObjectCallbackProc; const Arguments: TP
 begin
   FSettings := ProcSettings(Self, NIL, ObjectProc, True, Arguments);
   FHandle := 0;
-  SetDelay(Delay);
+  SetDelay(Delay);          
 end;
 
 destructor TMMTimer.Destroy;

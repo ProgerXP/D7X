@@ -2,7 +2,7 @@ unit Utils;
 
 interface
 
-uses StringsW, Windows, SysUtils, Classes, Graphics, StringUtils,
+uses StringsW, Windows, SysUtils, Classes, Graphics, StringUtils, PsAPI, TlHelp32,
      Forms;    // Forms is used for FormFade*.
 
 const
@@ -25,6 +25,17 @@ type
     Callback: TNotifyEvent;
     MinAlpha, MaxAlpha: Byte;
   end;
+
+  TProcessModule = record
+    Name: WideString;
+
+    { The following fields will be 0 if GetModuleInformation has failed: }
+    BaseAddress, ImageSize: DWord;
+    EndAddress: DWord;    // BaseAddress + ImageSize
+    EntryPoint: DWord;
+  end;
+
+  TProcessModules = array of TProcessModule;
 
 procedure AdjustArray(var DWArray: array of DWord; const Delta: Integer; MinValueToAdjust: DWord = 0);
 { -1: First < Second; 0: First = Second; +1: First > Second }
@@ -73,6 +84,8 @@ procedure ReadArray(const Stream: TStream; var DWArray: array of DWord); overloa
 
 function ParamStrW(Index: Integer): WideString;
 function ParamStrFrom(CmdLine: WideString; Index: Integer): WideString;
+// Pos points after the last char of Index parameter (or past the end of CmdLine string).
+function ParamStrEx(CmdLine: WideString; Index: Integer; out Pos: Integer): WideString;
 function ApplicationPath: WideString;  // alias to ExtractFilePath(ParamStrW(0)).
 
 procedure FindMask(Mask: WideString; Result: TStringsW);
@@ -86,7 +99,8 @@ function MakeValidFileName(const Str: WideString; const SubstitutionChar: WideCh
 function ExtractFilePath(FileName: WideString): WideString;
 function ExtractFileName(Path: WideString): WideString;
 
-function ExpandFileName(FileName: WideString): WideString;
+function ExpandFileName(FileName: WideString): WideString; overload;
+function ExpandFileName(FileName, BasePath: WideString): WideString; overload;
 function CurrentDirectory: WideString;
 function ChDir(const ToPath: WideString): Boolean;
 
@@ -98,6 +112,9 @@ function ExcludeTrailingBackslash(Path: WideString): WideString;
 function IncludeTrailingPathDelimiter(Path: WideString): WideString;
 function ExcludeTrailingPathDelimiter(Path: WideString): WideString;
 
+function IncludeLeadingPathDelimiter(Path: WideString): WideString;
+function ExcludeLeadingPathDelimiter(Path: WideString): WideString;
+
 // if file didn't exist, sets Result.ftLastWriteTime.dwLowDateTime to 0
 function FileInfo(Path: WideString): TWin32FindDataW;
 function IsDirectory(Path: WideString): Boolean;
@@ -107,6 +124,11 @@ function FileSize(Path: WideString): DWord;
 function FileSize64(Path: WideString): Int64;
 function DeleteFile(Path: WideString): Boolean;
 function SetNtfsCompression(const FileName: WideString; Level: Word): Boolean;
+
+function CurrentProcessInfo: TProcessInformation;
+// ProcessID = 0 returns info about current process. Result of 0 length indicates error of
+// OpenProcess or EnumProcessModules.
+function GetProcessModules(ProcessID: DWord = 0): TProcessModules;
 
 { recursive functions }
 function CopyDirectory(Source, Destination: WideString): Boolean;
@@ -482,25 +504,36 @@ end;
 
 function ParamStrFrom(CmdLine: WideString; Index: Integer): WideString;
 var
-  I, CurrentIndex: Word;
+  Pos: Integer;
+begin
+  Result := ParamStrEx(CmdLine, Index, Pos);
+end;
+
+function ParamStrEx(CmdLine: WideString; Index: Integer; out Pos: Integer): WideString;
+var
+  CurrentIndex: Word;
   Join: Boolean;
 begin
   Result := '';
   Join := False;
   CurrentIndex := 0;
 
-  for I := 1 to Length(CmdLine) do
-    if CmdLine[I] = '"' then
+  Pos := 1;
+  while Pos <= Length(CmdLine) do
+  begin
+    if CmdLine[Pos] = '"' then
       Join := not Join
-      else if (CmdLine[I] = ' ') and not Join then
+      else if (CmdLine[Pos] = ' ') and not Join then
       begin
-        if (I >= Length(CmdLine)) or (CmdLine[I + 1] <> ' ') then
+        if (Pos >= Length(CmdLine)) or (CmdLine[Pos + 1] <> ' ') then
           Inc(CurrentIndex)
       end
         else if CurrentIndex = Index then
-          Result := Result + CmdLine[I]
+          Result := Result + CmdLine[Pos]
           else if CurrentIndex > Index then
             Exit;
+    Inc(Pos);
+  end;
 end;
 
 function ApplicationPath: WideString;
@@ -599,7 +632,7 @@ function IncludeTrailingBackslash(Path: WideString): WideString;
 begin
   Result := Path;
   if (Result = '') or (Result[Length(Result)] <> '\') then
-    Insert('\', Result, $FFFF);
+    Insert('\', Result, MaxInt);
 end;
 
 // todo: turn this into ExcludeTrailingPathDelimiter.
@@ -614,14 +647,28 @@ function IncludeTrailingPathDelimiter(Path: WideString): WideString;
 begin
   Result := Path;
   if (Result = '') or (Result[Length(Result)] <> PathDelim) then
-    Insert(PathDelim, Result, $FFFF);
+    Insert(PathDelim, Result, MaxInt);
 end;
 
 function ExcludeTrailingPathDelimiter(Path: WideString): WideString;
 begin
   Result := Path;
-  if (Result <> '') and (Result[Length(Result)] = '\') then
+  if (Result <> '') and (Result[Length(Result)] = PathDelim) then
     Delete(Result, Length(Result), 1);
+end;
+
+function IncludeLeadingPathDelimiter(Path: WideString): WideString;
+begin
+  Result := Path;
+  if (Result <> '') and (Result[1] <> PathDelim) then
+    Insert(PathDelim, Result, 1);
+end;
+
+function ExcludeLeadingPathDelimiter(Path: WideString): WideString;
+begin
+  Result := Path;
+  if (Result <> '') and (Result[1] = PathDelim) then
+    Delete(Result, 1, 1);
 end;
 
 function ExtractFileName(Path: WideString): WideString;
@@ -660,6 +707,18 @@ var
 begin
   SetLength(Result, MaxPathLength);
   SetLength(Result, GetFullPathNameW(PWideChar(FileName), MaxPathLength, PWideChar(Result), Name));
+end;
+
+function ExpandFileName(FileName, BasePath: WideString): WideString;
+var
+  CWD: WideString;
+begin
+  CWD := CurrentDirectory;
+  try
+    Result := ExpandFileName(FileName);
+  finally
+    ChDir(CWD);
+  end;
 end;
 
 function CurrentDirectory: WideString;
@@ -763,6 +822,61 @@ begin
     finally
       CloseHandle(Handle);
     end;
+end;
+
+function CurrentProcessInfo: TProcessInformation;
+begin
+  Result.hProcess := GetCurrentProcess;
+  Result.hThread := GetCurrentThread;
+  Result.dwProcessId := GetCurrentProcessID;
+  Result.dwThreadId := GetCurrentThreadID;
+end;
+
+function GetProcessModules(ProcessID: DWord = 0): TProcessModules;
+var
+  ProcHandle: THandle;
+  ModHandles: array[0..255] of HModule;
+  ArraySize: DWord;
+  CurRes, I: Integer;
+  ModuleName: array[0..MAX_PATH] of WideChar;
+  ModuleInfo: TModuleInfo;
+begin
+  SetLength(Result, 0);
+
+  if ProcessID = 0 then
+    ProcessID := GetCurrentProcessId;
+  ProcHandle := OpenProcess(PROCESS_QUERY_INFORMATION or PROCESS_VM_READ, False, ProcessID);
+
+  if (ProcHandle <> 0) and EnumProcessModules(ProcHandle, @ModHandles[0], SizeOf(ModHandles), ArraySize)
+     and (ArraySize mod SizeOf(HModule) = 0) then
+  begin
+    CurRes := 0;
+
+    SetLength(Result, ArraySize div SizeOf(HModule));
+    ZeroMemory(@Result[0], SizeOf(Result));
+
+    for I := 0 to ArraySize div SizeOf(HModule) - 1 do
+      if GetModuleFilenameW(ModHandles[I], @ModuleName[0], SIzeOf(ModuleName)) <> 0 then
+      begin
+        Result[CurRes].Name := PWideChar(@ModuleName[0]);
+
+        if GetModuleInformation(GetCurrentProcess, ModHandles[I], @ModuleInfo, SizeOf(ModuleInfo)) then
+          with Result[CurRes] do
+          begin
+            BaseAddress := DWord(ModuleInfo.lpBaseOfDll);
+            ImageSize := ModuleInfo.SizeOfImage;
+            EndAddress := BaseAddress + ImageSize;
+
+            EntryPoint := DWord(ModuleInfo.EntryPoint);
+          end;
+
+        Inc(CurRes);
+      end;
+
+    SetLength(Result, CurRes);
+  end;
+
+  CloseHandle(ProcHandle);
 end;
 
 function CopyDirectory;

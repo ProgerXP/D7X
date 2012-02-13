@@ -5,7 +5,7 @@ unit ColorConsole;
 
 interface
 
-uses Contnrs, Classes, SysUtils, Windows, StringsW, StringUtils;
+uses Contnrs, Classes, SysUtils, Windows, StringsW, StrConv, StringUtils;
 
 type
   TCCPartClass = class of TCCPart;
@@ -46,11 +46,11 @@ type
   TCCWritingOptions = record
     Custom: Pointer;              // can be called by the caller to store arbitrary data
     Handle: THandle;
+    Colors: Boolean;
 
-    // if this is True and Handle = StdOut and Writer is the default CC writer then
-    // SetConsoleOutputCP(CP_UTF8) is called; also, it this is True all input is converted to
-    // UTF-8 when writing to Handle; if this is False input is converted into current codepage.
-    UTF8: Boolean;
+    // if Handle = StdOut and Writer is the default CC writer then SetConsoleOutputCP(Codepage)
+    // is called; also, all input is converted to this Codepage when writing to Handle.
+    Codepage: DWord;
     Writer: TCCWriter;
     VarGetter: TCCVarGetter;      // are not freed automatically; by default contains "NL" and "TAB".
   end;
@@ -307,12 +307,16 @@ function CCQuote(const Str: WideString; const Opt: TCCParsingOptions): WideStrin
 function ParseCC(const Str: Widestring; const Opt: TCCParsingOptions): TCCParsedStr;
 procedure OutputCC(const ParsedStr: TCCParsedStr; const Opt: TCCWritingOptions);
 function DefaultCCWriter: TCCWriter;
+function CompareCCWriters(A, B: TCCWriter): Boolean;
 function DefaultCCVars: TCCVarList;
 
 implementation
 
 const
   LineLen = 80;
+  // it was discovered that Delphi will fail with EAccessViolation if Exception.CreateFmt
+  // was passed too long string in one of its Formats (array of const).
+  MaxErrorStrLength = 1000;
 
 var
   CCVars: TCCVarList;
@@ -389,6 +393,11 @@ begin
   Result := TCCParsedStr.Writer;
 end;
 
+function CompareCCWriters(A, B: TCCWriter): Boolean;
+begin
+  Result := CompareMem(@TMethod(A), @TMethod(B), SizeOf(TMethod));
+end;
+
 function DefaultCCVars: TCCVarList;
 begin
   Result := CCVars;
@@ -415,7 +424,7 @@ begin
       end;
 
   with Context do
-    CreateFmt(Text, [Format(Msg, Fmt), Str, Pos, Copy(Str, Pos, 20)]);
+    CreateFmt(Text, [Format(Msg, Fmt), Copy(Str, 1, MaxErrorStrLength), Pos, Copy(Str, Pos, 20)]);
 end;
 
 { TCCVarList }
@@ -582,10 +591,10 @@ var
 begin
   with TCCWriting(Context) do
   begin
-    if Options.UTF8 then
+    if Options.Codepage = CP_UTF8 then
       Ansi := UTF8Encode(Str)
       else
-        Ansi := Str;
+        Ansi := FromWideString(Options.Codepage, Str);
 
     WriteFile(Options.Handle, Ansi[1], Length(Ansi), Written, NIL);
 
@@ -671,8 +680,8 @@ procedure TCCParsedStr.Write(const WritingOpt: TCCWritingOptions);
 begin
   FWritingOpt := WritingOpt;
 
-  if WritingOpt.UTF8 and (WritingOpt.Handle = GetStdHandle(STD_OUTPUT_HANDLE)) and
-     not SetConsoleOutputCP(CP_UTF8) then
+  if (WritingOpt.Handle = GetStdHandle(STD_OUTPUT_HANDLE)) and CompareCCWriters(WritingOpt.Writer, Self.Writer)
+      and not SetConsoleOutputCP(WritingOpt.Codepage) then
     RaiseLastOSError;
 
   FParts.StartWriting(WritingOpt);
@@ -1101,12 +1110,17 @@ end;
 
 procedure TCCColorPart.Write(var Context: TCCWriting);
 begin
-  Context.PostWriters.Add(PostWrite);
-  try
-    inherited;
-  finally
-    Context.PostWriters.Remove(PostWrite);
-  end;
+  if Context.Options.Colors then
+  begin
+    Context.PostWriters.Add(PostWrite);
+    try
+      inherited;
+    finally
+      Context.PostWriters.Remove(PostWrite);
+    end;
+  end
+    else
+      inherited;
 end;
 
 procedure TCCColorPart.PostWrite(var Context: TCCWriting; Start: TCoord);
@@ -1358,7 +1372,9 @@ initialization
   begin
     Custom := NIL;
     Handle := GetStdHandle(STD_OUTPUT_HANDLE);
-    UTF8 := True;
+    Colors := True;
+
+    CodePage := CP_UTF8;
     Writer := DefaultCCWriter();
     VarGetter := DefaultCCVars;
   end;

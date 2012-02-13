@@ -12,16 +12,16 @@ type
   public
     // this method handles UTF-8/Unicode/Unicode-BE files with signatures treating others as
     // using native ANSI charset. If AsIsAnsi = True signatureless files are not converted from
-    // system codepage to Unicode but simply copied with hi-order by set to 0. This is useful 
+    // system codepage to Unicode but simply copied with high-order byte set to 0. This is useful
     // if you're planning to manually convert it later and do not want any chars get corrupted.
     class function LoadUnicodeFrom(const FileName: WideString;
       AsIsAnsi: Boolean = False): WideString;
 
-    constructor Create(const FileName: WideString; Mode: Word); 
+    constructor Create(const FileName: WideString; Mode: Word);
 
-    // it will always create a new file but with the specified access (not like
-    //   FileCreate, which always opens it with exclusive access).
-    constructor CreateCustom(const FileName: WideString; Mode: Word);
+    // CreateCustom works like Create(fmCreate) but allows more specified access mode
+    // (FileCreate always opens new file with exclusive access). Mode supports fmForcePath.
+    constructor CreateCustom(const FileName: WideString; Mode: DWord);
 
     property FileName: WideString read FFileName;
   end;
@@ -37,8 +37,12 @@ const
   fmShareDenyRead  = SysUtils.fmShareDenyRead;
   fmShareDenyNone  = SysUtils.fmShareDenyNone;
 
+  fmForcePath      = $80000000;   // TFileStreamW-specific flag used in CreateCustom to ForceDirectories.
+
 implementation
-                     
+
+uses Utils;
+
 const
   UTF8Signature: array[0..2] of Char              = (#$EF, #$BB, #$BF);
   UnicodeSignature: array[0..1] of Char           = (#$FF, #$FE);
@@ -97,7 +101,7 @@ begin
     SetLength(Data, Stream.Size - Stream.Position);
     Stream.ReadBuffer(Data[1], Length(Data));
 
-    case Encoding of              
+    case Encoding of
     ANSI:
       if AsIsAnsi then
       begin
@@ -110,7 +114,7 @@ begin
     UTF8:
       Result := UTF8Decode(Data);
     Unicode, UnicodeBE:
-      begin                                        
+      begin
         if Encoding = UnicodeBE then
           for I := 1 to Length(Data) do
             if I mod 2 = 0 then
@@ -158,13 +162,17 @@ constructor TFileStreamW.CreateCustom;
 begin
   FFileName := FileName;
 
-  if Mode = fmCreate then
-    raise EFCreateError.CreateFmt('TFileStreamW: don''t use fmCreate with CreateCustom, it is already implied.', [])
+  if (Mode = fmCreate) or (Mode and (fmOpenRead or fmOpenWrite or fmOpenReadWrite) <> 0) then
+    raise EFCreateError.CreateFmt('TFileStreamW: CreateCustom implies fmCreate, don''t specify other modes.', [])
     else
     begin
-      inherited Create(FileCreateW(FileName, Mode));
+      if Mode and fmForcePath <> 0 then
+        ForceDirectories(ExtractFilePath(FileName));
+
+      inherited Create(FileCreateW(FileName, Mode and $FFFF + 2));
+
       if FHandle < 0 then
-        raise EFOpenError.CreateFmt('TFileStreamW: Cannot create file with custom access "%s". %s', [ExpandFileName(FileName), SysErrorMessage(GetLastError)])
+        raise EFCreateError.CreateFmt('TFileStreamW: Cannot CreateCustom(%s): %s', [ExpandFileName(FileName), SysErrorMessage(GetLastError)])
     end
 end;
 

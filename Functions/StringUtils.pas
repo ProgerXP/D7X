@@ -122,7 +122,7 @@ function CountSubstr(const Substr, Str: WideString): Integer;
 
 function EscapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
 function UnescapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
-function BinToHex(const Buf; Size: Integer): String;    // outputs in upper case.
+function BinToHex(const Buf; Size: Integer; Delim: String = ''): String;  // outputs in upper case.
 function HexToBin(Text: String): String;                // ignores char case of Text.
 
 function FormatVersion(Version: Word): WideString;
@@ -263,19 +263,22 @@ begin
 
         IsDelim := not IsDelim;
       end
-        else if IsDelim then
+        else
         begin
-          if not SkipEmpty or (Result[Current] <> '') then
+          if IsDelim then
           begin
-            Inc(Current);
-            if Current >= Length(Result) then
-              raise EOutOfMemory.CreateFmt('ExplodeUnquoting only supports up to %d elements.', [Length(Result)]);
+            if not SkipEmpty or (Result[Current] <> '') then
+            begin
+              Inc(Current);
+              if Current >= Length(Result) then
+                raise EOutOfMemory.CreateFmt('ExplodeUnquoting only supports up to %d elements.', [Length(Result)]);
+            end;
+
+            IsDelim := False;
           end;
 
-          IsDelim := False;
-        end
-          else
-            Result[Current] := Result[Current] + Str[I];
+          Result[Current] := Result[Current] + Str[I];
+        end;
 
   if IsDelim and not SkipEmpty then
     Inc(Current);
@@ -781,19 +784,22 @@ begin
 end;
 
 // String-adapted version of BinToHex from Classes.pas.
-function BinToHex(const Buf; Size: Integer): String;
+function BinToHex(const Buf; Size: Integer; Delim: String = ''): String;
 type
   TBuf = array[0..MaxInt - 1] of Byte;
 const
   Convert: array[0..15] of Char = '0123456789ABCDEF';
 var
-  I: Integer;
+  ItemSize, I: Integer;
 begin
-  SetLength(Result, Size * 2);
+  ItemSize := 2 + Length(Delim);
+  SetLength(Result, ItemSize * Size);
+
   for I := 0 to Size - 1 do
   begin
-    Result[I * 2 + 1] := Convert[TBuf(Buf)[I] shr  4];
-    Result[I * 2 + 2] := Convert[TBuf(Buf)[I] and $F];
+    Result[ItemSize * I + 1] := Convert[TBuf(Buf)[I] shr  4];
+    Result[ItemSize * I + 2] := Convert[TBuf(Buf)[I] and $F];
+    Move(Delim[1], Result[ItemSize * I + 3], Length(Delim));
   end;
 end;
 

@@ -50,10 +50,10 @@ type
     function FirstSection: WideString; virtual;
     procedure ReadSections(Strings: TStrings); overload;
     procedure ReadSectionValues(const Section: WideString; Strings: TStrings;
-      Clear: Boolean = True); overload;      
+      Clear: Boolean = True); overload;
     procedure ReadSectionsPrefixed(Prefix: WideString; Sections: TStrings; StripPrefix: Boolean = False); overload;
     procedure ReadSectionsPrefixed(Prefix: WideString; Sections: TStringsW; StripPrefix: Boolean = False); overload;
-    procedure CopyAllFrom(Ini: TCustomIniFileW); virtual;                                                            
+    procedure CopyAllFrom(Ini: TCustomIniFileW); virtual;
     procedure CopySectionFrom(Ini: TCustomIniFileW; const Section: WideString); virtual;
   end;
 
@@ -86,8 +86,9 @@ type
     function FirstSection: WideString; override;
 
     procedure Clear; override;
-    procedure Reload; override;             
+    procedure Reload; override;
     procedure CopyAllFrom(Ini: TCustomIniFileW); override;
+    function SectionCount: Integer;
   end;
 
   // TIniFileW is useful when INI is shared since it doesn't buffer data but
@@ -106,11 +107,11 @@ type
     procedure EraseSection(const Section: WideString); override;
     procedure DeleteKey(const Section, Ident: WideString); override;
     procedure UpdateFile; override;
-    
+
     procedure Clear; override;
     procedure Reload; override;
   end;
-                            
+
   // todo: implement WideString version of TRegIniFile (and maybe of TRegistry as well).
   TRegistryIniFileW = class (TCustomIniFileW)
   protected
@@ -290,7 +291,7 @@ begin
      ((IntStr[2] = 'X') or (IntStr[2] = 'x')) then
     IntStr := '$' + Copy(IntStr, 3, Maxint);
   Result := StrToIntDef(IntStr, Default);
-end;           
+end;
 
 function TCustomIniFileW.FirstSection: WideString;
 var
@@ -358,7 +359,7 @@ begin
 
     for I := 0 to All.Count - 1 do
       if PosW(Prefix, All[I]) <> 0 then
-        if StripPrefix then  
+        if StripPrefix then
           Sections.Add( Copy(All[I], Length(Prefix) + 1, $FFFF) )
           else
             Sections.Add(All[I]);
@@ -627,7 +628,7 @@ begin
   try
     if Clear then
       Strings.Clear;
-      
+
     I := FSections.IndexOf(Section);
     if I >= 0 then
     begin
@@ -654,7 +655,7 @@ begin
   try
     if Clear then
       Strings.Clear;
-      
+
     I := FSections.IndexOf(Section);
     if I >= 0 then
       TStringsW(FSections.Objects[I]).AppendTo(Strings);
@@ -795,6 +796,11 @@ begin
       inherited;
 end;
 
+function TMemIniFileW.SectionCount: Integer;
+begin
+  Result := FSections.Count;
+end;
+
 { TIniFileW }
 
 destructor TIniFileW.Destroy;
@@ -862,7 +868,7 @@ begin
     try
       if Clear then
         Strings.Clear;
-        
+
       if GetPrivateProfileStringW(PWideChar(Section), NIL, NIL, Buffer, BufLength,
         PWideChar(FFileName)) <> 0 then
       begin
@@ -894,7 +900,7 @@ begin
     try
       if Clear then
         Strings.Clear;
-        
+
       for I := 0 to KeyList.Count - 1 do
         Strings.Add(KeyList[I] + KeyValueSepar + ReadString(Section, KeyList[I], ''))
     finally
@@ -931,7 +937,7 @@ procedure TIniFileW.Reload;
 begin
   { TIniFileW doesn't buffer anything, each value is already read from disk by means of WinAPI calls. }
 end;
-            
+
 { TRegistryIniFileW }
 
 constructor TRegistryIniFileW.Create(const KeyName: WideString);

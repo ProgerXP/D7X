@@ -7,19 +7,6 @@ program ColorConsoleTest;
 
 uses SysUtils, ColorConsole, Utils;
 
-procedure WriteUsingCC(const Str: WideString);
-begin
-  try
-    WriteColored(Str);
-  except
-    on E: Exception do
-    begin
-      WriteLn(E.ClassName, ': ', E.Message);
-      ReadLn;
-    end;
-  end;
-end;
-
 const
   TestStrings: array[0..12] of String = (
     '{w@b  {10}{wi@b ColorConsole demo} :: {yi@b http://proger.i-forge.net/ColorConsole}{NL}}',
@@ -36,12 +23,24 @@ const
 
     '{NL}{gi {g ***} Bug-tests {g ***}}',
     '{@wi ----------------------------------------------------------------------------------------------------'#$D#$A'===}');
+
+procedure WriteUsingCC(const Str: WideString);
+begin
+  try
+    WriteColored(Str);
+  except
+    on E: Exception do
+    begin
+      WriteLn(E.ClassName, ': ', E.Message);
+      ReadLn;
+    end;
+  end;
+end;
+
+procedure WriteStrings;
 var
   I: Integer;
 begin
-  WriteUsingCC(TestStrings[0]);
-  WriteLn;
-
   if ParamStrW(1) <> '' then
   begin
     I := 1;
@@ -56,6 +55,20 @@ begin
         WriteUsingCC(TestStrings[I]);
         WriteLn;
       end;
+end;
+
+begin
+  WriteUsingCC(TestStrings[0]);
+  WriteLn;
+
+  WriteStrings;
+
+  WriteLn;
+  WriteUsingCC('{@wi {<Now the same with disabled colors...}{NL}}');
+  WriteLn;
+
+  CCWriting.Colors := False;
+  WriteStrings;
 
   ReadLn;
 end.

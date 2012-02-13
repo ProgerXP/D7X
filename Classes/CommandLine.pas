@@ -42,6 +42,9 @@ type
         constructor Create(const Task, Option: WideString);
       end;
 
+    ECLText = class (ECommandLine)
+    end;
+
   TCLHash = class (THash)
   public
     constructor Create; override;
@@ -97,7 +100,9 @@ type
     property Options[Name: WideString]: WideString read GetOption; default;
     property ArgCount: Integer read FArgCount;
     property Arguments[Index: Integer]: WideString read GetArgument;
-    function IsSwitchOn(Name: WideString): Boolean;
+    function IsPassed(const Option: WideString): Boolean;
+    function GetOrDefault(const Option, Default: WideString): WideString;
+    function IsSwitchOn(Name: WideString; Default: Boolean = False): Boolean;
     function GetArgByExt(const Extension: WideString): WideString;
 
     class procedure RunTests;  // debug method.
@@ -130,18 +135,24 @@ type
     property Translate[What: WideString]: WideString read GetTr write SetTr; default;
 
     function Format(const What: WideString; Fmt: array of const): WideString;
+    // raises ECLText calling Format(What, Fmt).
+    procedure RaiseText(const What: WideString; Fmt: array of const);
   end;
 
   TCLApplication = class
   protected
     FLang: TCLAppLang;
     F_EOLN: WideString;
+
     FWaitOnExit: TCLWaitOnExit;
+    FShowExitCodeOnExit: Boolean;
+    FShowUtf8ConsoleWarning: Boolean;
 
     FLastProgress: String;
     FProgressPrecision: Byte;
 
     FTaskAliases: TCLHash;
+    FLastTask: WideString;
     FCLParser: TCLParser;
     FExitCode: Integer;
 
@@ -159,6 +170,8 @@ type
 
     procedure ConsoleWaitForEnter;
     procedure ConsoleGoUpOneLine;
+    procedure EnsureConsoleAtNewLine;
+    function OnCtrlEvent(Event: DWord): Boolean; virtual;
 
     function TryDoingTask(Task: WideString): Boolean; virtual;    // Task is not an alias
     function DoStandardTask(Task: WideString): Boolean;           // Task is not an alias
@@ -167,7 +180,8 @@ type
     function CreateLang: TCLAppLang; virtual;
     function FormatVersion: WideString;
     function FormatDate: WideString;
-    function GetConsoleXY(IncY: SmallInt): TCoord;
+    // IncY is added to Result.Y - useful to pass Result directly to SetConsoleCursorPosition.
+    function GetConsoleXY(IncY: SmallInt = 0): TCoord;
     procedure ResetProgress;
     procedure UpdateProgress(Current, Max: DWord; Extra: WideString = '');
 
@@ -190,6 +204,7 @@ type
 
     procedure Clear;
     procedure SetInfo; virtual; abstract;
+    procedure SetupConsoleTricks; virtual;
 
     property RanOK: Boolean read GetRanOK write SetRanOK default False;
     property ExitCode: Integer read FExitCode write FExitCode default 1;
@@ -201,6 +216,9 @@ type
     property EOLN: WideString read F_EOLN write SetEOLN;
     property ProgressPrecision: Byte read FProgressPrecision write SetProgressPrecision default 1;
     property WaitOnExit: TCLWaitOnExit read FWaitOnExit write FWaitOnExit default clWaitOnError;
+    property ShowExitCodeOnExit: Boolean read FShowExitCodeOnExit write FShowExitCodeOnExit default True;
+    property ShowUtf8ConsoleWarning: Boolean read FShowUtf8ConsoleWarning write FShowUtf8ConsoleWarning default True;
+
     function IsNakedTask(Task: WideString): Boolean; virtual;
 
     procedure Run; virtual;
@@ -213,12 +231,14 @@ type
 
     procedure OutputHeader; virtual;
       function GetHeader: TWideStringArray; virtual;
+    procedure OutputExitCode(Code: Integer); virtual;
     procedure OutputVersion;
     procedure OutputHelp(Detailed: Boolean = False);
   end;
 
   TCLColorApplication = class (TCLApplication)
   protected
+    FInitialConsoleCP: DWord;
     FCCParsing: TCCParsingOptions;
     FCCWriting: TCCWritingOptions;
 
@@ -229,9 +249,17 @@ type
   public
     destructor Destroy; override;
 
-    procedure OutputHeader; override;
+    procedure AcquireOptions; override;
     procedure HandleException(E: Exception); override;
+
+    procedure OutputHeader; override;
+    procedure OutputExitCode(Code: Integer); override;
+
+    function CCQuote(const Str: WideString): WideString;
   end;
+
+const
+  ClExitCodeForHelp = 8083;
 
 implementation
 
@@ -436,11 +464,29 @@ begin
   Result := '';
 end;
 
-function TCLParser.IsSwitchOn(Name: WideString): Boolean;
+function TCLParser.IsPassed(const Option: WideString): Boolean;
 begin
-  Name := LowerCase( Options[Name] );
-  Result := (Name <> FNotPassed) and (Name <> '0') and (Name <> 'false') and
-            (Name <> 'off') and (Name <> 'no');
+  Result := Options[Option] <> FNotPassed;
+end;
+
+function TCLParser.GetOrDefault(const Option, Default: WideString): WideString;
+begin
+  Result := Options[Option];
+  if Result = FNotPassed then
+    Result := Default;
+end;
+
+function TCLParser.IsSwitchOn(Name: WideString; Default: Boolean = False): Boolean;
+begin
+  Name := Options[Name];
+
+  if Name = FNotPassed then
+    Result := Default
+    else
+    begin
+      Name := LowerCase(Name);
+      Result := (Name <> '0') and (Name <> 'false') and (Name <> 'off') and (Name <> 'no');
+    end;
 end;
 
 function TCLParser.GetAlias(Alias: WideString): WideString;
@@ -599,6 +645,8 @@ end;
 
 procedure TCLAppLang.AddDefaultStrings;
 begin
+  Translate['window title'] := '%s%s - %s';
+
   Translate['header 1'] := '~ %s%s~%s%s';
   Translate['header line prefix'] := '  ';
   Translate['header 2'] := '%s';
@@ -612,10 +660,15 @@ begin
   Translate['error: no task argument'] := '"%s" task requires at least %d arguments.';
   Translate['error: no task option'] := '"%s" task requires "%s" option.';
 
+  Translate['code on exit'] := 'Exiting with code %d.';
   Translate['wait on exit'] := '______________________' + F_EOLN +
                                'Press Enter to exit...';
   Translate['progress'] := '  [ %.$f%% ]... %s';
   Translate['version'] := '%s  v%s';
+  Translate['utf-8 message'] := 'Note: above line contained UTF-8 characters; if' +
+                                ' they are not properly displayed' + F_EOLN +
+                                '       try changing Font in the Properties dialog of' +
+                                ' the program''s EXE file.';
 end;
 
 function TCLAppLang.GetTr(What: WideString): WideString;
@@ -808,6 +861,11 @@ begin
   end;
 end;
 
+procedure TCLAppLang.RaiseText(const What: WideString; Fmt: array of const);
+begin
+  raise ECLText.Create( Format(What, Fmt) );
+end;
+
 { TCLApplication }
 
 constructor TCLApplication.Create;
@@ -815,6 +873,7 @@ begin
   Init;
   Clear;
   SetInfo;
+  SetupConsoleTricks;
 end;
 
 destructor TCLApplication.Destroy;
@@ -830,7 +889,11 @@ procedure TCLApplication.Init;
 begin
   F_EOLN := #13#10;
   FProgressPrecision := 1;
+
   FWaitOnExit := clWaitOnError;
+  FShowExitCodeOnExit := True;
+  FShowUtf8ConsoleWarning := True;
+
   FTaskAliases := TCLHash.Create;
   FCLParser := TCLParser.Create;
   RanOK := False;
@@ -850,9 +913,39 @@ begin
   Help := '';
   HelpDetails := '';
 
+  FLastTask := '';
+
   FTaskAliases.Clear;
   FCLParser.Clear;
   ResetProgress;
+end;
+
+var
+  CPObj: TCLApplication = NIL;
+
+function ConsoleProc(Event: DWord): Boolean; stdcall;
+begin
+  Result := Assigned(CPObj) and CPObj.OnCtrlEvent(Event);
+end;
+
+procedure TCLApplication.SetupConsoleTricks;
+var
+  Ver: WideString;
+begin
+  if Version = 0 then
+    Ver := ''
+    else
+      Ver := ' ' + FormatVersion;
+
+  SetConsoleTitleW(PWideChar( FLang.Format('window title', [Name, Ver, ParamStrW(0)]) ));
+
+  CPObj := Self;
+  SetConsoleCtrlHandler(@ConsoleProc, True);
+end;
+
+function TCLApplication.OnCtrlEvent(Event: DWord): Boolean;
+begin
+  Result := False;
 end;
 
 procedure TCLApplication.OutputHeader;
@@ -934,21 +1027,23 @@ begin
   Task := LowerCase(Task);
   Result := True;
 
-  if Task = FCLParser.NotPassed then
-    OutputHelp(False)
-    else if Task = 'help' then
-      OutputHelp(True)
-      else if Task = 'version' then
-        OutputVersion
-        else
-          Result := False;
+  if (Task = FCLParser.NotPassed) or (Task = 'help') then
+  begin
+    OutputHelp(Task = 'help');
+    FExitCode := ClExitCodeForHelp;
+  end
+    else if Task = 'version' then
+      OutputVersion
+      else
+        Result := False;
 end;
 
 procedure TCLApplication.OutputHelp(Detailed: Boolean = False);
 begin
   ConsoleWriteLn(Help);
+
   if Detailed then
-    ConsoleWriteLn(HelpDetails);
+    ConsoleWriteLn(F_EOLN + F_EOLN + HelpDetails);
 end;
 
 procedure TCLApplication.ErrorWriteLn(const Str: WideString);
@@ -967,8 +1062,21 @@ begin
 end;
 
 procedure TCLApplication.ConsoleWrite(const Str: WideString);
+var
+  I: Integer;
 begin
   WriteStringTo(StdOut, Str);
+
+  if FShowUtf8ConsoleWarning and IsConsoleHandle and (GetConsoleOutputCP = CP_UTF8) then
+    for I := 1 to Length(Str) do
+      if Ord(Str[I]) > 127 then
+      begin
+        FShowUtf8ConsoleWarning := False;
+        EnsureConsoleAtNewLine;
+        ConsoleWriteLn(FLang['utf-8 message']);
+
+        Break;
+      end;
 end;
 
 procedure TCLApplication.WriteStringTo(Handle: DWord; Str: WideString);
@@ -1006,18 +1114,19 @@ end;
   end;
 
 procedure TCLApplication.ConsoleWaitForEnter;
-var
-  Ch: WideChar;
-  CharsRead: DWord;
 begin
   if IsConsoleHandle(StdIn) and IsConsolehandle(StdOut) then
-    repeat
+    ReadLn;
+
+    { The code below is supposed to work but ReadConsole often returns old keypresses
+      (e.g. put two ReadConsole one after enother - they'll behave in a strange way. }
+    {repeat
       if not ReadConsoleW(StdIn, @Ch, 1, CharsRead, NIL) then
         Break;
-    until (Byte(Ch) in [13, 10]) or (CharsRead = 0);
+    until (Byte(Ch) in [13, 10]) or (CharsRead = 0);}
 end;
 
-function TCLApplication.GetConsoleXY(IncY: SmallInt): TCoord;
+function TCLApplication.GetConsoleXY(IncY: SmallInt = 0): TCoord;
 var
   Info: TConsoleScreenBufferInfo;
 begin
@@ -1061,6 +1170,12 @@ begin
   end;
 end;
 
+procedure TCLApplication.EnsureConsoleAtNewLine;
+begin
+  if GetConsoleXY.X > 0 then
+    ConsoleWriteLn;
+end;
+
 procedure TCLApplication.SetProgressPrecision(Value: Byte);
 begin
   FProgressPrecision := Min(9, Value);
@@ -1089,10 +1204,7 @@ begin
     DoTask(Task);
   except
     on E: Exception do
-    begin
-      RanOK := False;
       HandleException(E);
-    end;
   end;
 
   BeforeExit;
@@ -1104,7 +1216,10 @@ var
 begin
   Msg := '';
 
-  if E.InheritsFrom(ECLUnknownTask) then
+  if RanOK then
+    RanOK := False;
+
+  if E is ECLUnknownTask then
   begin
     RanOK := False;
 
@@ -1114,12 +1229,14 @@ begin
   end
     else
     begin
-      if E.InheritsFrom(ECLTooFewTaskArgs) then
+      if E is ECLTooFewTaskArgs then
         with ECLTooFewTaskArgs(E) do
           Msg := FLang.Format('error: no task argument', [Task, RequiredCount])
-      else if E.InheritsFrom(ECLNoRequiredTaskOption) then
+      else if E is ECLNoRequiredTaskOption then
         with ECLNoRequiredTaskOption(E) do
           Msg := FLang.Format('error: no task option', [Task, Option])
+      else if E is ECLText then
+        Msg := E.Message
       else
         Msg := FLang.Format('exception', [E.ClassName, E.Message, DWord(ExceptAddr)]);
 
@@ -1143,6 +1260,9 @@ begin
       FWaitOnExit := clAlwaysWait
       else if FCLParser.IsSwitchOn('wait-on-error') then
         FWaitOnExit := clWaitOnError;
+
+  FShowExitCodeOnExit := FCLParser.IsSwitchOn('show-exit-code', True);
+  FShowUtf8ConsoleWarning := FCLParser.IsSwitchOn('utf8-warning', True);
 end;
 
 // recall naked C functions and the name probably won't seem strange to you...
@@ -1156,6 +1276,7 @@ end;
 procedure TCLApplication.DoTask(Task: WideString);
 begin
   Task := TaskAliasIfAnyFor(Task);
+  FLastTask := Task;
 
   if not TryDoingTask(Task) then
     raise ECLUnknownTask.Create(Task);
@@ -1163,12 +1284,21 @@ end;
 
 procedure TCLApplication.BeforeExit;
 begin
+  if FShowExitCodeOnExit and (FExitCode <> ClExitCodeForHelp) and
+     ((FExitCode <> 0 {Success}) or (FWaitOnExit = clAlwaysWait)) then
+    OutputExitCode(FExitCode);
+
   if ((FWaitOnExit = clAlwaysWait) or ((FWaitOnExit = clWaitOnError) and not RanOK)) and IsConsolehandle(StdOut) then
   begin
     ConsoleWriteLn;
     ConsoleWrite(FLang['wait on exit']);
     ConsoleWaitForEnter;
   end;
+end;
+
+procedure TCLApplication.OutputExitCode(Code: Integer);
+begin
+  ConsoleWrite( FLang.Format('code on exit', [FExitCode]) );
 end;
 
 procedure TCLApplication.OutputVersion;
@@ -1225,9 +1355,9 @@ end;
 
 function TCLApplication.TaskArg(const Task: WideString; Index: Integer): WideString;
 begin
-  Result := FCLParser.Arguments[Index];
+  Result := FCLParser.Arguments[Index + 1];   // argument #0 is the task name itself.
   if Result = FCLParser.NotPassed then
-    raise ECLTooFewTaskArgs.Create(Task, Index);
+    raise ECLTooFewTaskArgs.Create(Task, Index + 1);
 end;
 
 { TCLColorApplication }
@@ -1235,6 +1365,8 @@ end;
 procedure TCLColorApplication.Init;
 begin
   inherited;
+
+  FInitialConsoleCP := GetConsoleOutputCP;
 
   FCCParsing := CCParsing;
   FCCWriting := CCWriting;
@@ -1260,15 +1392,44 @@ begin
   Result['error: no task argument'] := '{ri >} {wi %s} task requires at least {ri %d} {wi arguments}.';
   Result['error: no task option'] := '{ri >} {wi %s} task requires {ri %s} option.';
 
+  Result['code on exit'] := '{%s Exiting with code {i%0:s %d}.}';
   Result['wait on exit'] := '{i ______________________}{NL}Press {wi Enter} to exit...';
   Result['progress'] := '  [ {wi %.$f%%} ]... {wi %s}';
   Result['version'] := '{yi %s}  {y v%s}';
+  Result['utf-8 message'] := '{yi Note:} above line contained {wi UTF-8 characters}; if' +
+                             ' they are not properly displayed{NL}      try changing {wi Font} in the' +
+                             ' {wi Properties} dialog of the program''s {wi EXE file}.';
+
+  { New strings: }
+  Result['wrong --console-cp'] := 'Invalid {ri --console-cp} value {wi %s}: must be either' +
+                                  ' {wi numeric}, {gi auto} ({wi blank}) or {gi utf8}.';
 end;
 
 destructor TCLColorApplication.Destroy;
 begin
+  if IsConsoleHandle then
+    SetConsoleOutputCP(FInitialConsoleCP);
+
   FCCWriting.VarGetter.Free;
   inherited;
+end;
+
+procedure TCLColorApplication.HandleException(E: Exception);
+begin
+  if not (E is ECLText) then
+    E.Message := CCQuote(E.Message);
+  inherited HandleException(E);
+end;
+
+procedure TCLColorApplication.WriteStringTo(Handle: DWord; Str: WideString);
+var
+  WritingOpt: TCCWritingOptions;
+begin
+  WritingOpt := FCCWriting;
+  WritingOpt.Handle := Handle;
+
+  Str := NormalizeWritingStr(Str);
+  WriteColored(Str, FCCParsing, FCCWriting);
 end;
 
 procedure TCLColorApplication.OutputHeader;
@@ -1286,21 +1447,36 @@ begin
   ConsoleWriteLn(S);
 end;
 
-procedure TCLColorApplication.WriteStringTo(Handle: DWord; Str: WideString);
-var
-  WritingOpt: TCCWritingOptions;
+procedure TCLColorApplication.OutputExitCode(Code: Integer);
+const
+  ExitColors: array[Boolean] of WideChar = ('r', 'g');
 begin
-  WritingOpt := FCCWriting;
-  WritingOpt.Handle := Handle;
-
-  Str := NormalizeWritingStr(Str);
-  WriteColored(Str, FCCParsing, FCCWriting);
+  ConsoleWrite( FLang.Format('code on exit', [ExitColors[FExitCode = 0], FExitCode]) );
 end;
 
-procedure TCLColorApplication.HandleException(E: Exception);
+procedure TCLColorApplication.AcquireOptions;
+var
+  CP: WideString;
+  IntCP: Integer;
 begin
-  E.Message := CCQuote(E.Message, FCCParsing);
-  inherited HandleException(E);
+  inherited;
+
+  FCCWriting.Colors := FCLParser.IsSwitchOn('colors', True);
+
+  CP := LowerCase( FCLParser.GetOrDefault('console-cp', IntToStr(GetConsoleOutputCP)) );
+  if (CP = '') or (CP = 'auto') then
+    FCCWriting.Codepage := GetConsoleOutputCP
+    else if Copy(CP, 1, 3) = 'utf' then
+      FCCWriting.Codepage := CP_UTF8
+      else if TryStrToInt(CP, IntCP) then
+        FCCWriting.Codepage := IntCP
+        else
+          ErrorWriteLn( FLang.Format('wrong --console-cp', [CP]) );
+end;
+
+function TCLColorApplication.CCQuote(const Str: WideString): WideString;
+begin
+  Result := ColorConsole.CCQuote(Str, FCCParsing);
 end;
 
 initialization

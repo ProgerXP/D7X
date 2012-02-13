@@ -10,8 +10,24 @@ interface
 uses Windows, SysUtils, Math, Classes, Contnrs, StringsW, StringUtils;
 
 type
-  TRpnVarCallback = function (Name: WideString): Double of object;
+  TRpnEvaluator = class;
   TRpnOperatorClass = class of TRpnOperator;
+  TRpnVariableClass = class of TRpnVariable;
+
+  TRpnValueKind = set of (valNum, valBool, valBytes, valStr, varCustom);
+
+  TRpnScalar = record
+    Kind: TRpnValueKind;
+
+    Num: Double;
+    Bool: Boolean;
+    Bytes: String;
+    Str: WideString;
+    Custom: Pointer;      // is not used in RPNit but reserved for external use.
+  end;
+
+  TRpnVarCallback = function (Eval: TRpnEvaluator; Name: WideString): TRpnScalar of object;
+  TRpnNotExistingVarCallback = function (Eval: TRpnEvaluator; const Name: WideString; out Value: TRpnScalar): Boolean of object;
 
   ERPN = class (Exception)
   end;
@@ -32,6 +48,10 @@ type
       constructor Create(Expr: WideString; Pos: Integer = 0);   // Pos - 1-based.
     end;
 
+      EUnterminatedString = class (EWrongRpnSyntax)
+        constructor Create(const Str: WideString; StartPos: Integer; const Expr: WideString);
+      end;
+
     EInvalidRpnFloatStr = class (ERPN)
     public
       Num, Expr: WideString;
@@ -45,8 +65,20 @@ type
         constructor Create(Operation: String);
       end;
 
+      EWrongTopStackValueKind = class (ERpnEvaluation)
+        constructor Create(Got, Expected: TRpnValueKind);
+      end;
+
+      EIntegerExpectedOnStackTop = class (ERpnEvaluation)
+        constructor Create(Got: Double);
+      end;
+
       ENotEnoughRpnArguments = class (ERpnEvaluation)
         constructor Create(Operator: String; NeedArgs, HasArgs: Integer);
+      end;
+
+      EMissingVarFuncArgument = class (ERpnEvaluation)
+        constructor Create(Func: WideString);
       end;
 
       EMissingRpnVariable = class (ERpnEvaluation)
@@ -63,6 +95,11 @@ type
 
       EEmptyRpnStack = class (ERpnEvaluation)
         constructor Create;
+      end;
+
+      // custom error class for external errors (e.g. wrong function operands).
+      EInvalidRpnOperation = class (ERpnEvaluation)
+        constructor Create(const Msg: String; Fmt: array of const);
       end;
 
   TRpnOperators = class
@@ -95,23 +132,31 @@ type
 
   TRpnVariables = class (THash)
   protected
-    procedure Notify(Index: Integer; Action: TListNotification); override;
+    FNotExistingVarCallback: TRpnNotExistingVarCallback;
 
-    function GetVar(const Name: WideString): Double;
-    procedure PutVar(const Name: WideString; const Value: Double);
+    procedure Notify(Index: Integer; Action: TListNotification); override;
   public
-    // returns 0 if variable didn't exist.
-    property Variables[const Name: WideString]: Double read GetVar write PutVar; default;
+    constructor Create; override;
+
+    function Get(Eval: TRpnEvaluator; const Name: WideString): TRpnScalar; reintroduce;
+    procedure Add(const Name: WideString; const Value: TRpnScalar); reintroduce;
+
+    property NotExistingVarCallback: TRpnNotExistingVarCallback read FNotExistingVarCallback write FNotExistingVarCallback;
+
     function Exists(const Name: WideString): Boolean;
-    function GetIfExists(const Name: WideString; out Value: Double): Boolean;
+    function GetIfExists(Eval: TRpnEvaluator; const Name: WideString;
+      out Value: TRpnScalar): Boolean; virtual;
+
+    function GetByIndex(Index: Integer): TRpnScalar;
+    function GetMatching(const WildcardName: WideString): TWideStringArray;
 
     procedure CopyAsKeyValuesFrom(Other: TStrings); overload;
     procedure CopyAsKeyValuesFrom(Other: TStringsW); overload;
   end;
 
-  TRpnOperandStack = class
+  TRpnValueStack = class
   protected
-    FValues: array[0..8191] of Double;    // 64 KiB
+    FValues: array[0..8191] of TRpnScalar;   // 136 KiB.
     FCount: Integer;
   public
     constructor Create;
@@ -120,21 +165,30 @@ type
     function IsEmpty: Boolean;
     property Count: Integer read FCount;
 
-    function Peek: Double;
-    procedure Push(Value: Double);
-    function Pop: Double;
+    function Peek: TRpnScalar;
+    procedure Push(Value: TRpnScalar);
+    function PushIfSet(Value: TRpnScalar): Boolean;
+    function Pop: TRpnScalar;
+
+    function PopNum: Double;
+    // unlike PopNum which returns any number PopInt checks if it's integral (with fractional part = 0).
+    function PopInt: Double;
+    function PopStr: WideString;
+
+    function Reverse: Boolean;
   end;
 
   TCompiledRPN = class (TObjectList)
   public
     constructor Create;
+    procedure Reverse;
   end;
 
   { FVariables is not freed. }
   TRpnEvaluator = class
   protected
     FCompiled: TCompiledRPN;
-    FStack: TRpnOperandStack;
+    FStack: TRpnValueStack;
 
     FOperators: TRpnOperators;
     FVariables: TRpnVariables;
@@ -147,46 +201,94 @@ type
     property Variables: TRpnVariables read FVariables write FVariables;
     property VarCallback: TRpnVarCallback read FVarCallback write FVarCallback;
 
-    function Evaluate: Double;
+    function Evaluate: TRpnScalar;
 
-    function GetVariable(Name: WideString): Double;
-    property Stack: TRpnOperandStack read FStack;
+    function GetVariable(Name: WideString): TRpnScalar;
+    property Stack: TRpnValueStack read FStack;
   end;
 
-  TRpnOperand = class
+  TRpnValue = class
   public
-    function Value(Eval: TRpnEvaluator): Double; virtual; abstract;
+    function Value(Eval: TRpnEvaluator): TRpnScalar; virtual; abstract;
   end;
 
-    TRpnConst = class (TRpnOperand)
+    TRpnConst = class (TRpnValue)
     protected
-      FValue: Double;
+      FValue: TRpnScalar;
     public
-      constructor Create(Value: Double);
-      function Value(Eval: TRpnEvaluator): Double; override;
+      constructor Create(Value: TRpnScalar);
+      function Value(Eval: TRpnEvaluator): TRpnScalar; override;
     end;
 
-    TRpnVariable = class (TRpnOperand)
+    TRpnVariable = class (TRpnValue)
     protected
       FName: WideString;
     public
       constructor Create(Name: WideString);
 
       property Name: WideString read FName;
-      function Value(Eval: TRpnEvaluator): Double; override;
+      function Value(Eval: TRpnEvaluator): TRpnScalar; override;
     end;
+
+      // This class isn't used in this unit but can be used as a base class for apps using RPNit.
+      TRpnFuncVariable = class (TRpnVariable)
+      protected
+        function ExecFunc(Eval: TRpnEvaluator; const Name: WideString): TRpnScalar; virtual; abstract;
+      public
+        function Value(Eval: TRpnEvaluator): TRpnScalar; override;
+      end;
 
   TRpnOperator = class
   public
-    function Execute(Eval: TRpnEvaluator): Double; virtual; abstract;
+    function Execute(Eval: TRpnEvaluator): TRpnScalar; virtual; abstract;
   end;
 
     TRpnMathOperator = class (TRpnOperator)
     protected
       function Eval(A, B: Double): Double; virtual; abstract;
     public
-      function Execute(Eval: TRpnEvaluator): Double; override;
+      function Execute(Eval: TRpnEvaluator): TRpnScalar; override;
     end;
+
+      TRpnAdd = class (TRpnMathOperator)
+      protected
+        function Eval(A, B: Double): Double; override;
+      end;
+
+      TRpnSubtract = class (TRpnMathOperator)
+      protected
+        function Eval(A, B: Double): Double; override;
+      end;
+
+      TRpnMultiply = class (TRpnMathOperator)
+      protected
+        function Eval(A, B: Double): Double; override;
+      end;
+
+      TRpnDivide = class (TRpnMathOperator)
+      protected
+        function Eval(A, B: Double): Double; override;
+      end;
+
+      TRpnPower = class (TRpnMathOperator)
+      protected
+        function Eval(A, B: Double): Double; override;
+      end;
+
+      TRpnModulus = class (TRpnMathOperator)
+      protected
+        function Eval(A, B: Double): Double; override;
+      end;
+
+  TRpnCompSettings = record
+    CacheCompiled: Boolean;   // doesn't work if Operators <> NIL.
+    PrefixNotation: Boolean;
+    VariableClass: TRpnVariableClass;
+
+    Operators: TRpnOperators;
+    Variables: TRpnVariables;
+    VarCallback: TRpnVarCallback;
+  end;
 
 // raises EInvalidRpnFloatStr.
 function StrToFloatRPN(Str: WideString; Expr: WideString = ''): Double;
@@ -194,52 +296,39 @@ function RpnVarChars: WideString;
 procedure SetRpnVarChars(const Chars: WideString);
 procedure ClearRpnCache;
 
+function RpnNum(Num: Double): TRpnScalar; overload;
+// more efficient 32-bit parameter passing.
+function RpnNum(Num: Integer): TRpnScalar; overload;
+function RpnBool(Value: Boolean): TRpnScalar;
+function RpnBytes(const Bytes: String): TRpnScalar;
+function RpnStr(const Str: WideString): TRpnScalar;
+function RpnKindToStr(Kind: TRpnValueKind): String;
+function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''): WideString;
+function RpnValueToInt(Value: TRpnScalar): Integer;
+
 // raises EDuplicateRpnOperator:
 procedure RegisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
+function RpnOpClassByName(const Name: String): TRpnOperatorClass;
 // these 2 do nothing if Op is not defined:
 procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
 procedure UnregisterDefaultRpnOperatorsOf(OpClass: TRpnOperatorClass);
+// returns new value; sets to New if given.
+function DefaultRpnVarClass(New: TRpnVariableClass = NIL): TRpnVariableClass;
 
-function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators = NIL): Double; overload;
-function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators = NIL): Double; overload;
+function EvalRPN(Expr: WideString; Variables: TRpnVariables = NIL): TRpnScalar; overload;
+function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback): TRpnScalar; overload;
+function EvalRPN(Expr: WideString; const Settings: TRpnCompSettings): TRpnScalar; overload;
+
+var
+  DefaultRpnSettings: TRpnCompSettings;
 
 implementation
 
 type
   TVarValue = class
   public
-    Value: Double;
-    constructor Create(AValue: Double);
-  end;
-
-  TRpnAdd = class (TRpnMathOperator)
-  protected
-    function Eval(A, B: Double): Double; override;
-  end;
-
-  TRpnSubtract = class (TRpnMathOperator)
-  protected
-    function Eval(A, B: Double): Double; override;
-  end;
-
-  TRpnMultiply = class (TRpnMathOperator)
-  protected
-    function Eval(A, B: Double): Double; override;
-  end;
-
-  TRpnDivide = class (TRpnMathOperator)
-  protected
-    function Eval(A, B: Double): Double; override;
-  end;
-
-  TRpnPower = class (TRpnMathOperator)
-  protected
-    function Eval(A, B: Double): Double; override;
-  end;
-
-  TRpnModulus = class (TRpnMathOperator)
-  protected
-    function Eval(A, B: Double): Double; override;
+    Value: TRpnScalar;
+    constructor Create(AValue: TRpnScalar);
   end;
 
 var
@@ -276,6 +365,11 @@ begin
       CreateFmt('Invalid RPN expression string "%s".', [Expr]);
 end;
 
+constructor EUnterminatedString.Create(const Str: WideString; StartPos: Integer; const Expr: WideString);
+begin
+  CreateFmt('Unterminated string "%s" started at %d in RPN expression "%s".', [Str, StartPos, Expr]);
+end;
+
 constructor EInvalidRpnFloatStr.Create(Num: WideString; Expr: WideString = '');
 begin
   Self.Num := Num;
@@ -289,7 +383,17 @@ end;
 
 constructor EEmptyStackOperation.Create(Operation: String);
 begin
-  CreateFmt('Attempted to %s an empty TRpnOperandStack.', [Operation]);
+  CreateFmt('Attempted to %s from empty TRpnValueStack.', [Operation]);
+end;
+
+constructor EWrongTopStackValueKind.Create(Got, Expected: TRpnValueKind);
+begin
+  CreateFmt('Expected a %s value on top of TRpnValueStack but got %s.', [RpnKindToStr(Expected), RpnKindToStr(Got)]);
+end;
+
+constructor EIntegerExpectedOnStackTop.Create(Got: Double);
+begin
+  CreateFmt('Expected an integer value without fractional part on top of TRpnValueStack but got %s.', [Got]);
 end;
 
 constructor ENotEnoughRpnArguments.Create(Operator: String; NeedArgs, HasArgs: Integer);
@@ -298,6 +402,11 @@ begin
     Operator := Copy(Operator, 5, Length(Operator));
 
   CreateFmt('Too few arguments on stack for %s (needs %d, has %d).', [Operator, NeedArgs, HasArgs]);
+end;
+
+constructor EMissingVarFuncArgument.Create(Func: WideString);
+begin
+  CreateFmt('Not enough arguments on stack for function "%s".', [Func]);
 end;
 
 constructor EMissingRpnVariable.Create(Name: WideString);
@@ -322,9 +431,14 @@ begin
                    ' - but at least one is required to determine the expression result.');
 end;
 
+constructor EInvalidRpnOperation.Create(const Msg: String; Fmt: array of const);
+begin
+  CreateFmt(Msg, Fmt);
+end;
+
 { TVarValue }
 
-constructor TVarValue.Create(AValue: Double);
+constructor TVarValue.Create(AValue: TRpnScalar);
 begin
   Value := AValue;
 end;
@@ -499,13 +613,21 @@ end;
 
 { TRpnVariables }
 
-function TRpnVariables.GetVar(const Name: WideString): Double;
+constructor TRpnVariables.Create;
 begin
-  if not GetIfExists(Name, Result) then
-    Result := 0;
+  inherited;
+
+  Sorted := True;
+  Duplicates := dupError;   // variables should be set using Add method.
 end;
 
-procedure TRpnVariables.PutVar(const Name: WideString; const Value: Double);
+function TRpnVariables.Get(Eval: TRpnEvaluator; const Name: WideString): TRpnScalar;
+begin
+  if not GetIfExists(Eval, Name, Result) then
+    Result.Kind := [];
+end;
+
+procedure TRpnVariables.Add(const Name: WideString; const Value: TRpnScalar);
 var
   I: Integer;
 begin
@@ -518,17 +640,21 @@ end;
 
 function TRpnVariables.Exists(const Name: WideString): Boolean;
 begin
-  Result := IndexOfName(Name) <> -1;
+  Result := IndexOf(Name) <> -1;
 end;
 
-function TRpnVariables.GetIfExists(const Name: WideString; out Value: Double): Boolean;
+function TRpnVariables.GetIfExists(Eval: TRpnEvaluator; const Name: WideString;
+  out Value: TRpnScalar): Boolean;
 var
   I: Integer;
 begin
   I := IndexOf(Name);
   Result := I <> -1;
+
   if Result then
-    Value := TVarValue(Objects[I]).Value;
+    Value := TVarValue(Objects[I]).Value
+    else if Assigned(FNotExistingVarCallback) then
+      Result := FNotExistingVarCallback(Eval, Name, Value);
 end;
 
 procedure TRpnVariables.CopyAsKeyValuesFrom(Other: TStrings);
@@ -538,7 +664,7 @@ var
 begin
   for I := 0 to Other.Count - 1 do
     if Split(Other[I], '=', Name, Value) then
-      Variables[Trim(Name)] := StrToFloatRPN(Trim(Value));
+      Add(Trim(Name), RpnNum( StrToFloatRPN(Trim(Value)) ));
 end;
 
 procedure TRpnVariables.CopyAsKeyValuesFrom(Other: TStringsW);
@@ -548,7 +674,7 @@ var
 begin
   for I := 0 to Other.Count - 1 do
     if Split(Other[I], '=', Name, Value) then
-      Variables[Trim(Name)] := StrToFloatRPN(Trim(Value));
+      Add(Trim(Name), RpnNum( StrToFloatRPN(Trim(Value)) ));
 end;
 
 procedure TRpnVariables.Notify(Index: Integer; Action: TListNotification);
@@ -559,24 +685,87 @@ begin
   inherited;
 end;
 
-{ TRpnOperandStack }
+function TRpnVariables.GetByIndex(Index: Integer): TRpnScalar;
+begin
+  Result := TVarValue(Objects[Index]).Value;
+end;
 
-constructor TRpnOperandStack.Create;
+function TRpnVariables.GetMatching(const WildcardName: WideString): TWideStringArray;
+  function MinPos(PosA, PosB: Integer): Integer;
+  begin
+    if PosA = 0 then
+      Result := PosB
+      else if PosB = 0 then
+        Result := PosA
+        else if PosA > PosB then
+          Result := PosB
+          else
+            Result := PosA;
+  end;
+
+var
+  Cur, Pos: Integer;
+  Prefix: WideString;
+begin
+  SetLength(Result, 0);
+
+  Pos := MinPos(PosW('?', WildcardName), PosW('*', WildcardName));
+  Pos := MinPos(Pos, PosW('+', WildcardName));
+
+  if Pos = 0 then
+  begin
+    if Exists(WildcardName) then
+    begin
+      SetLength(Result, 1);
+      Result[0] := WildcardName;
+    end;
+  end
+    else
+    begin
+      Cur := 0;
+      SetLength(Result, $40000);
+
+      Prefix := Copy(WildcardName, 1, Pos - 1);
+
+      Pos := 0;
+      if Prefix <> '' then
+        while (Pos < Count) and (Copy(Strings[Pos], 1, Length(Prefix)) <> Prefix) do
+          Inc(Pos);
+
+      for Pos := Pos to Count - 1 do
+        if (Length(Prefix) > 0) and (Copy(Strings[Pos], 1, Length(Prefix)) <> Prefix) then
+          Break   // the list is sorted, see Create.
+          else if MaskMatch(Strings[Pos], WildcardName) then
+            if Cur >= Length(Result) then
+              raise EListError.CreateFmt('Too many RPN variables matching "%s" - more than %d.', [WildcardName, Length(Result)])
+              else
+              begin
+                Result[Cur] := Strings[Pos];
+                Inc(Cur);
+              end;
+
+      SetLength(Result, Cur);
+    end;
+end;
+
+{ TRpnValueStack }
+
+constructor TRpnValueStack.Create;
 begin
   Clear;
 end;
 
-procedure TRpnOperandStack.Clear;
+procedure TRpnValueStack.Clear;
 begin
   FCount := 0;
 end;
 
-function TRpnOperandStack.IsEmpty: Boolean;
+function TRpnValueStack.IsEmpty: Boolean;
 begin
   Result := FCount < 1;
 end;
 
-function TRpnOperandStack.Peek: Double;
+function TRpnValueStack.Peek: TRpnScalar;
 begin
   if IsEmpty then
     raise EEmptyStackOperation.Create('Peek')
@@ -584,7 +773,20 @@ begin
       Result := FValues[FCount - 1];
 end;
 
-function TRpnOperandStack.Pop: Double;
+procedure TRpnValueStack.Push(Value: TRpnScalar);
+begin
+  FValues[FCount] := Value;
+  Inc(FCount);
+end;
+
+function TRpnValueStack.PushIfSet(Value: TRpnScalar): Boolean;
+begin
+  Result := Value.Kind <> [];
+  if Result then
+    Push(Value);
+end;
+
+function TRpnValueStack.Pop: TRpnScalar;
 begin
   if IsEmpty then
     raise EEmptyStackOperation.Create('Pop')
@@ -595,10 +797,58 @@ begin
     end;
 end;
 
-procedure TRpnOperandStack.Push(Value: Double);
+function TRpnValueStack.PopNum: Double;
+var
+  Op: TRpnScalar;
 begin
-  FValues[FCount] := Value;
-  Inc(FCount);
+  if IsEmpty then
+    raise EEmptyStackOperation.Create('PopNum')
+    else
+    begin
+      Op := Pop;
+      if not (valNum in Op.Kind) then
+        raise EWrongTopStackValueKind.Create(Op.Kind, [valNum]);
+
+      Result := Op.Num;
+    end;
+end;
+
+function TRpnValueStack.PopInt: Double;
+begin
+  Result := PopNum;
+  if Frac(Result) <> 0 then
+    raise EIntegerExpectedOnStackTop.Create(Result);
+end;
+
+function TRpnValueStack.PopStr: WideString;
+var
+  Op: TRpnScalar;
+begin
+  if IsEmpty then
+    raise EEmptyStackOperation.Create('PopStr')
+    else
+    begin
+      Op := Pop;
+      if not (valStr in Op.Kind) then
+        raise EWrongTopStackValueKind.Create(Op.Kind, [valStr]);
+
+      Result := Op.Str;
+    end;
+end;
+
+function TRpnValueStack.Reverse: Boolean;
+var
+  I: Integer;
+  Temp: TRpnScalar;
+begin
+  Result := Count > 0;
+
+  for I := 0 to Count div 2 - 1 do
+  begin
+    Temp := FValues[I];
+    FValues[I] := FValues[Count - I - 1];
+    FValues[Count - I - 1] := Temp;
+  end;
 end;
 
 { TCompiledRPN }
@@ -608,14 +858,22 @@ begin
   inherited Create(True);
 end;
 
+procedure TCompiledRPN.Reverse;
+var
+  I: Integer;
+begin
+  for I := 0 to Count div 2 - 1 do
+    Exchange(I, Count - I - 1);
+end;
+
 { TRpnConst }
 
-constructor TRpnConst.Create(Value: Double);
+constructor TRpnConst.Create(Value: TRpnScalar);
 begin
   FValue := Value;
 end;
 
-function TRpnConst.Value(Eval: TRpnEvaluator): Double;
+function TRpnConst.Value(Eval: TRpnEvaluator): TRpnScalar;
 begin
   Result := FValue;
 end;
@@ -627,9 +885,23 @@ begin
   FName := Name;
 end;
 
-function TRpnVariable.Value(Eval: TRpnEvaluator): Double;
+function TRpnVariable.Value(Eval: TRpnEvaluator): TRpnScalar;
 begin
   Result := Eval.GetVariable(FName);
+end;
+
+{ TRpnFuncVariable }
+
+function TRpnFuncVariable.Value(Eval: TRpnEvaluator): TRpnScalar;
+begin
+  try
+    Result := ExecFunc(Eval, FName);
+    if Result.Kind = [] then
+      Result := inherited Value(Eval);
+  except
+    on E: EEmptyStackOperation do
+      raise EMissingVarFuncArgument.Create(FName);
+  end;
 end;
 
 { Functions }
@@ -667,12 +939,117 @@ begin
     CachedExprs.Clear;
 end;
 
+function RpnNum(Num: Double): TRpnScalar;
+begin
+  ZeroMemory(@Result, SizeOf(Result));
+  Result.Kind := [valNum];
+  Result.Num := Num;
+end;
+
+function RpnNum(Num: Integer): TRpnScalar;
+begin
+  ZeroMemory(@Result, SizeOf(Result));
+  Result.Kind := [valNum];
+  Result.Num := Num;
+end;
+
+function RpnBool(Value: Boolean): TRpnScalar;
+begin
+  ZeroMemory(@Result, SizeOf(Result));
+  Result.Kind := [valBool];
+  Result.Bool := Value;
+end;
+
+function RpnBytes(const Bytes: String): TRpnScalar;
+begin
+  ZeroMemory(@Result, SizeOf(Result));
+  Result.Kind := [valBytes];
+  Result.Bytes := Bytes;
+end;
+
+function RpnStr(const Str: WideString): TRpnScalar;
+begin
+  ZeroMemory(@Result, SizeOf(Result));
+  Result.Kind := [valStr];
+  Result.Str := Str;
+end;
+
+function RpnKindToStr(Kind: TRpnValueKind): String;
+begin
+  Result := '';
+
+  if valNum in Kind then
+    Result := Result + 'i';
+  if valBool in Kind then
+    Result := Result + 'b';
+  if valBytes in Kind then
+    Result := Result + 'y';
+  if valStr in Kind then
+    Result := Result + 's';
+
+  if Result = '' then
+    Result := '-';
+end;
+
+function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''): WideString;
+begin
+  with Value do
+    if valStr in Kind then
+      Result := Str
+      else if valBytes in Kind then
+        Result := BinToHex(Bytes[1], Length(Bytes), ' ')
+        else if valNum in Kind then
+          if Frac(Num) = 0 then
+            Result := IntToStr(Trunc(Num))
+            else
+              Result := FloatToStr(Num)
+          else if valBool in Kind then
+            Result := BoolToStr(Bool)
+            else
+              Result := Null;
+end;
+
+function RpnValueToInt(Value: TRpnScalar): Integer;
+  procedure Error;
+  begin
+    raise EConvertError.Create('Cannot convert RPN value into a number.');
+  end;
+
+begin
+  with Value do
+    if valStr in Kind then
+      if TryStrToInt(Str, Result) then
+        {OK}
+        else
+          Error
+      else if valNum in Kind then
+        if Frac(Num) = 0 then
+          Result := Trunc(Num)
+          else
+            Error
+        else
+          Error;
+end;
+
 procedure RegisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
 begin
   if DefaultOperators = NIL then
     DefaultOperators := TRpnOperators.Create;
 
   DefaultOperators.Add(Op, OpClass);
+end;
+
+function RpnOpClassByName(const Name: String): TRpnOperatorClass;
+const
+  Error = 'RpnOpClassByName retrieved %s class which doesn''t descend from %s.';
+begin
+  if Copy(Name, 1, 1) <> 'T' then
+    Result := TRpnOperatorClass( GetClass('TRpn' + Name) )
+    else
+      Result := TRpnOperatorClass( GetClass(Name) );
+
+  if not Result.InheritsFrom(TRpnOperator) then
+    raise EInvalidArgument.CreateFmt(Error, [Result, TRpnOperator]);
 end;
 
 procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
@@ -685,35 +1062,48 @@ begin
   DefaultOperators.DeleteAll(OpClass);
 end;
 
+function DefaultRpnVarClass(New: TRpnVariableClass = NIL): TRpnVariableClass;
+begin
+  if New <> NIL then
+    if not New.InheritsFrom(TRpnVariable) then
+      raise EInvalidArgument.CreateFmt('RPN variable class must inherit from %s.', [TRpnVariable])
+      else
+        DefaultRpnSettings.VariableClass := New;
+
+  Result := DefaultRpnSettings.VariableClass;
+end;
+
 function NormalizeRPN(Expr: WideString): WideString;
 begin
   Result := LowerCase(Trim(Expr));
 end;
 
-function GetCache(Expr: WideString; Operators: TRpnOperators): TCompiledRPN;
+function GetCache(Expr: WideString; const Settings: TRpnCompSettings): TCompiledRPN;
 begin
-  if (CachedExprs = NIL) or ((Operators <> NIL) and (Operators <> DefaultOperators)) then
-    Result := NIL
-    else
-      Result := TCompiledRPN( CachedExprs[NormalizeRPN(Expr)] );
+  with Settings do
+    if not CacheCompiled or ( (CachedExprs = NIL) or ((Operators <> NIL) and (Operators <> DefaultOperators)) ) then
+      Result := NIL
+      else
+        Result := TCompiledRPN( CachedExprs[NormalizeRPN(Expr)] );
 end;
 
-procedure SetCache(Expr: WideString; Operators: TRpnOperators; COmpiled: TCompiledRPN);
+procedure SetCache(Expr: WideString; const Settings: TRpnCompSettings; COmpiled: TCompiledRPN);
 begin
-  if (Operators = NIL) or (Operators = DefaultOperators) then
-  begin
-    if CachedExprs = NIL then
-      with CachedExprs do
-      begin
-        CachedExprs := TObjectHash.Create(True);
-        CaseSensitive := False;
-      end;
+  with Settings do
+    if CacheCompiled and ( (Operators = NIL) or (Operators = DefaultOperators) ) then
+    begin
+      if CachedExprs = NIL then
+        with CachedExprs do
+        begin
+          CachedExprs := TObjectHash.Create(True);
+          CaseSensitive := False;
+        end;
 
-    CachedExprs.AddObject(NormalizeRPN(Expr), Compiled);
-  end;
+      CachedExprs.AddObject(NormalizeRPN(Expr), Compiled);
+    end;
 end;
 
-function CompileRPN(Expr: WideString; Operators: TRpnOperators = NIL): TCompiledRPN;
+function CompileRPN(Expr: WideString; Settings: TRpnCompSettings): TCompiledRPN;
 var
   Pos: Integer;
   VarChars: WideString;
@@ -745,51 +1135,82 @@ var
     end;
   end;
 
-    procedure ConstOperand;
+    procedure StringOperand(const Str: WideString);
     begin
-      Result.Add(TRpnConst.Create( StrToFloatRPN(CutName('0123456789,.')) ));
+      Result.Add(TRpnConst.Create( RpnStr(Str) ));
+    end;
+
+    procedure NumOperand;
+    begin
+      Result.Add(TRpnConst.Create(RpnNum( StrToFloatRPN(CutName('0123456789,.')) )));
     end;
 
     procedure Variable;
     begin
-      Result.Add(TRpnVariable.Create( CutName(VarChars) ));
+      Result.Add(Settings.VariableClass.Create( CutName(VarChars) ));
     end;
 
 var
-  Handled, IsVar: Boolean;
+  Handled, IsVar, IsString: Boolean;
   OpClass: TRpnOperatorClass;
+  CurStr: WideString;
 begin
   if NormalizeRPN(Expr) = '' then
     raise EEmptyRPN.Create;
 
-  if Operators = NIL then
-    Operators := DefaultOperators;
+  if Settings.Operators = NIL then
+    Settings.Operators := DefaultOperators;
 
   VarChars := LowerCase(FRpnVarChars);
 
   Result := TCompiledRPN.Create;
   try
     Pos := 1;
+    IsString := False;
+    CurStr := '';
 
     while Pos <= Length(Expr) do
     begin
       Handled := True;
 
-        case Char(Expr[Pos]) of
-        ' ':        Inc(Pos);
-        '0'..'9':   ConstOperand;
-        '-', '+':
-          if NextChar('0123456789') then
-            ConstOperand
-            else
-              Handled := False;
+      if IsString then
+      begin
+        if (Expr[Pos] = '''') and
+           ( (Pos >= Length(Expr)) or (Expr[Pos + 1] <> '''') ) then
+        begin
+          StringOperand(CurStr);
+
+          IsString := False;
+          CurStr := '';
+        end
         else
-          Handled := False;
+        begin
+          CurStr := CurStr + Expr[Pos];
+          if Expr[Pos] = '''' then
+            Inc(Pos);   // double ' = single '
         end;
+
+        Inc(Pos);
+      end
+        else
+          case Char(Expr[Pos]) of
+          ' ':        Inc(Pos);
+          '''':       begin
+                        IsString := True;
+                        Inc(Pos);
+                      end;
+          '0'..'9':   NumOperand;
+          '-', '+':   if NextChar('0123456789') then
+                        NumOperand
+                        else
+                          Handled := False;
+          else
+            Handled := False;
+          end;
 
       if not Handled then
       begin
-        OpClass := Operators[Expr[Pos]];
+        OpClass := Settings.Operators[Expr[Pos]];
         IsVar := CharMatches(Expr[Pos], VarChars);
 
         if Assigned(OpClass) and IsVar and
@@ -803,43 +1224,58 @@ begin
                 raise EWrongRpnSyntax.Create(Expr, Pos);
       end;
     end;
+
+    if IsString then
+      raise EUnterminatedString.Create(CurStr, Length(Expr) - Length(CurStr), Expr);
+
+    if Settings.PrefixNotation then
+      Result.Reverse;
   except
     Result.Free;
     raise;
   end;
 end;
 
-function CompileCaching(Expr: WideString; Operators: TRpnOperators = NIL): TCompiledRPN;
+function CompileCaching(Expr: WideString; const Settings: TRpnCompSettings): TCompiledRPN;
 begin
-  Result := GetCache(Expr, Operators);
+  Result := GetCache(Expr, Settings);
 
   if Result = NIL then
   begin
-    Result := CompileRPN(Expr);
-    SetCache(Expr, Operators, Result);
+    Result := CompileRPN(Expr, Settings);
+    SetCache(Expr, Settings, Result);
   end;
 end;
 
-function EvalRPN(Expr: WideString; Variables: TRpnVariables; Operators: TRpnOperators): Double;
+function EvalRPN(Expr: WideString; Variables: TRpnVariables): TRpnScalar;
 var
-  Eval: TRpnEvaluator;
+  Settings: TRpnCompSettings;
 begin
-  Eval := TRpnEvaluator.Create(CompileCaching(Expr, Operators));
-  try
-    Eval.Variables := Variables;
-    Result := Eval.Evaluate;
-  finally
-    Eval.Free;
-  end;
+  Settings := DefaultRpnSettings;
+  Settings.Variables := Variables;
+
+  Result := EvalRPN(Expr, Settings);
 end;
 
-function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback; Operators: TRpnOperators): Double;
+function EvalRPN(Expr: WideString; VarCallback: TRpnVarCallback): TRpnScalar;
+var
+  Settings: TRpnCompSettings;
+begin
+  Settings := DefaultRpnSettings;
+  Settings.VarCallback := VarCallback;
+
+  Result := EvalRPN(Expr, Settings);
+end;
+
+function EvalRPN(Expr: WideString; const Settings: TRpnCompSettings): TRpnScalar; overload;
 var
   Eval: TRpnEvaluator;
 begin
-  Eval := TRpnEvaluator.Create(CompileCaching(Expr, Operators));
+  Eval := TRpnEvaluator.Create(CompileCaching(Expr, Settings));
   try
-    Eval.VarCallback := VarCallback;
+    Eval.Variables := Settings.Variables;
+    Eval.VarCallback := Settings.VarCallback;
+
     Result := Eval.Evaluate;
   finally
     Eval.Free;
@@ -850,10 +1286,12 @@ end;
 
 constructor TRpnEvaluator.Create(Compiled: TCompiledRPN);
 begin
+  FVariables := NIL;
+
   FOperators := TRpnOperators.Create;
   FOperators.Copy(DefaultOperators);
 
-  FStack := TRpnOperandStack.Create;
+  FStack := TRpnValueStack.Create;
 
   FCompiled := Compiled;
 end;
@@ -865,19 +1303,19 @@ begin
   inherited;
 end;
 
-function TRpnEvaluator.Evaluate: Double;
+function TRpnEvaluator.Evaluate: TRpnScalar;
 var
   I: Integer;
   Item: TObject;
 begin
-  Result := 0;
+  Result := RpnNum(0);
 
   for I := 0 to FCompiled.Count - 1 do
   begin
     Item := FCompiled[I];
 
-    if Item.InheritsFrom(TRpnOperand) then
-      FStack.Push( TRpnOperand(Item).Value(Self) )
+    if Item.InheritsFrom(TRpnValue) then
+      FStack.Push( TRpnValue(Item).Value(Self) )
       else if Item.InheritsFrom(TRpnOperator) then
         FStack.Push( TRpnOperator(Item).Execute(Self) )
         else
@@ -892,30 +1330,30 @@ begin
         raise EEmptyRpnStack.Create;
 end;
 
-function TRpnEvaluator.GetVariable(Name: WideString): Double;
+function TRpnEvaluator.GetVariable(Name: WideString): TRpnScalar;
 begin
   if Variables <> NIL then
   begin
-    if not Variables.GetIfExists(Name, Result) then
+    if not Variables.GetIfExists(Self, Name, Result) then
       raise EMissingRpnVariable.Create(Name);
   end
     else if Assigned(VarCallback) then
-      Result := VarCallback(Name)
+      Result := VarCallback(Self, Name)
       else
         raise EVariablelessRPN.Create(Name);
 end;
 
 { TRpnMathOperator }
 
-function TRpnMathOperator.Execute(Eval: TRpnEvaluator): Double;
+function TRpnMathOperator.Execute(Eval: TRpnEvaluator): TRpnScalar;
 var
   A: Double;
 begin
   if Eval.Stack.Count < 2 then
     raise ENotEnoughRpnArguments.Create(ClassName, 2, Eval.Stack.Count);
 
-  A := Eval.Stack.Pop;
-  Result := Self.Eval(Eval.Stack.Pop, A);
+  A := Eval.Stack.PopNum;
+  Result := RpnNum( Self.Eval(Eval.Stack.PopNum, A) );
 end;
 
 { TRpnAdd }
@@ -961,6 +1399,10 @@ begin
 end;
 
 initialization
+  ZeroMemory(@DefaultRpnSettings, SizeOf(DefaultRpnSettings));
+  DefaultRpnSettings.CacheCompiled := True;
+  DefaultRpnSettings.VariableClass := TRpnVariable;
+
   RegisterDefaultRpnOperator('+', TRpnAdd);
   RegisterDefaultRpnOperator('-', TRpnSubtract);
   RegisterDefaultRpnOperator('*', TRpnMultiply);
