@@ -21,7 +21,7 @@ type
 
     Num: Double;
     Bool: Boolean;
-    Bytes: String;
+    Bytes: AnsiString;
     Str: WideString;
     Custom: Pointer;      // is not used in RPNit but reserved for external use.
   end;

@@ -2,11 +2,24 @@ unit StringsW;
 
 { WideString versions of classes from standard Classes unit with some handy features added. }
 
+{
+  Alteration methods & their effect:
+  * Clear         - lnDeleted on all + Changed
+  * Delete        - lnDeleted + Changed
+  * Exchange      - Changed
+  * Add           - lnAdded + Changed
+  * SetKey/Val    - Changed
+  * SetObject     - lnDeleted + lnAdded + Changed
+  * Extract       - lnExtracted + lnDeleted + Changed
+  * Begin/EndUpd  - Changed
+  * Sort          - Changed
+}
+
 interface
 
 uses FileStreamW, Classes, Windows, SysUtils;
 
-type                                      
+type
   TDuplicatesEx = (dupIgnore, dupAccept, dupReplace, dupError);
   TListAssignOp = Classes.TListAssignOp;
   TListSortCompare = Classes.TListSortCompare;
@@ -21,7 +34,7 @@ type
     FQuoteChar: WideChar;
     FNameValueSeparator: WideChar;
     FUpdateCount: Integer;
-    
+
     FLineBreak: WideString;
 
     function GetCommaText: WideString;
@@ -63,7 +76,6 @@ type
     procedure SetFromText(const Value: WideString);
 
     procedure Notify(Index: Integer; Action: TListNotification); virtual;
-    procedure NotifyAllFrom(Index: Integer; Action: TListNotification); 
   public
     constructor Create; virtual;
 
@@ -71,11 +83,11 @@ type
     function AddObject(const S: WideString; AObject: TObject): Integer; virtual;
     procedure Append(const S: WideString);
     procedure AddStrings(Strings: TStringsW); overload; virtual;
-    procedure AddStrings(Strings: TStrings); overload; 
+    procedure AddStrings(Strings: TStrings); overload;
     procedure Assign(Source: TPersistent); overload; override;
     procedure BeginUpdate;
     procedure Clear; virtual; abstract;
-    procedure Delete(Index: Integer); overload; virtual; abstract; 
+    procedure Delete(Index: Integer); overload; virtual; abstract;
     procedure EndUpdate;
     function Equals(Strings: TStringsW): Boolean;
     procedure Exchange(Index1, Index2: Integer); virtual;
@@ -116,9 +128,9 @@ type
     procedure CopyTo(const Other: TStringsW); overload;
     function NameList: TStringListW; virtual;
     property AsString: WideString read GetTextStr;
-    function Extract(Index: Integer): TObject;             
+    function Extract(Index: Integer): TObject; virtual;
     function IndexOfInstanceOf(AClass: TClass; CanInherit: Boolean = True; StartAt: Integer = 0): Integer;
-    function IsEmpty: Boolean;                     
+    function IsEmpty: Boolean;
     function Delete(Str: WideString): Boolean; overload;
     function DeleteByName(Name: WideString): Boolean;
     function JoinNames(const Delim: WideString): WideString;
@@ -170,7 +182,7 @@ type
     function Add(const S: WideString; Tag: DWord = 0): Integer; override;
     function AddObject(const S: WideString; AObject: TObject): Integer; override;
     procedure Clear; override;
-    procedure Delete(Index: Integer); override; 
+    procedure Delete(Index: Integer); override;
     procedure Exchange(Index1, Index2: Integer); override;
     function Find(const S: WideString; var Index: Integer): Boolean; virtual;
     function IndexOf(const S: WideString): Integer; override;
@@ -184,7 +196,7 @@ type
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
     property OnChanging: TNotifyEvent read FOnChanging write FOnChanging;
   end;
-
+
 type
   { Ported WideString-version of THashedStringList from standard IniFiles unit. }
 
@@ -218,15 +230,14 @@ type
     FNameHash: TStringHashW;
     FValueHashValid: Boolean;
     FNameHashValid: Boolean;
-    
+
+    procedure Changed; override;
     procedure UpdateValueHash;
     procedure UpdateNameHash;
   public
     destructor Destroy; override;
     function IndexOf(const S: WideString): Integer; override;
-    function IndexOfName(const Name: WideString): Integer; override; 
-                               
-    procedure Changed; override;
+    function IndexOfName(const Name: WideString): Integer; override;
   end;
 
   THash = THashedStringListW;
@@ -245,6 +256,7 @@ type
     constructor Create(OwnsObjects: Boolean); reintroduce; overload;
     destructor Destroy; override;
 
+    function Extract(Index: Integer): TObject; override;
     function Delete(Obj: TObject): Boolean; overload;
 
     property OwnsObjects: Boolean read FOwnsObjects write FOwnsObjects;
@@ -274,7 +286,7 @@ const
   SSortedListError = 'Operation not allowed on sorted list';
 
 { TStringsW }
-             
+
 constructor TStringsW.Create;
 begin
   FLineBreak := sLineBreak;
@@ -308,7 +320,7 @@ begin
     EndUpdate;
   end;
 end;
-         
+
 procedure TStringsW.AddStrings(Strings: TStrings);
 var
   I: Integer;
@@ -682,7 +694,7 @@ var
   Stream: TStream;
 begin
   Stream := TFileStreamW.Create(FileName, fmCreate);
-  try                          
+  try
     if WriteUtfSignature then
       Stream.Write(UTF8Signature[0], Length(UTF8Signature));
     SaveToStream(Stream);
@@ -726,7 +738,7 @@ var
       Add(Copy(Value, Started, Current - Started));
     Started := Current + 1
   end;
-begin                
+begin
   BeginUpdate;
   try
     Clear;
@@ -894,7 +906,7 @@ begin
   else
     if Index >= 0 then Delete(Index);
 end;
-            
+
 function TStringsW.GetTag(Index: Integer): DWord;
 begin
   Result := DWord( Objects[Index] );
@@ -951,20 +963,12 @@ procedure TStringsW.Notify(Index: Integer; Action: TListNotification);
 begin
 end;
 
-procedure TStringsW.NotifyAllFrom(Index: Integer; Action: TListNotification);
-begin
-  for Index := 0 to Count - 1 do
-    Notify(Index, Action);
-end;
-
 function TStringsW.Extract(Index: Integer): TObject;
-begin
-  Notify(Index, lnExtracted);
+begin           
   Result := Objects[Index];
-  Objects[Index] := NIL;
   Delete(Index);
 end;
-                                    
+
 function TStringsW.IndexOfInstanceOf(AClass: TClass; CanInherit: Boolean = True; StartAt: Integer = 0): Integer;
 begin
   for Result := StartAt to Count - 1 do
@@ -1018,7 +1022,7 @@ begin
     Result.EndUpdate;
   end;
 end;
-                     
+
 function TStringsW.JoinNames(const Delim: WideString): WideString;
 var
   I: Integer;
@@ -1075,12 +1079,14 @@ begin
       case Duplicates of
         dupIgnore: Exit;
         dupError: Error(SDuplicateString, 0);
+        dupReplace:
+          begin
+            PutObject(Result, AObject);
+            Exit;
+          end;
       end;
 
-  if Duplicates = dupReplace then
-    PutObject(Result, AObject)
-    else
-      InsertItem(Result, S, AObject);
+  InsertItem(Result, S, AObject);
 end;
 
 procedure TStringListW.Changed;
@@ -1096,11 +1102,14 @@ begin
 end;
 
 procedure TStringListW.Clear;
+var
+  I: Integer;
 begin
   if FCount <> 0 then
   begin
     Changing;
-    NotifyAllFrom(0, lnDeleted);
+    for I := 0 to FCount - 1 do
+      Notify(I, lnDeleted);
 
     Finalize(FList^[0], FCount);
     FCount := 0;
@@ -1347,7 +1356,7 @@ begin
     if Sorted then Sort;
   end;
 end;
-      
+      
 { TStringHashW }
 
 procedure TStringHashW.Add(const Key: WideString; Value: Integer);
@@ -1503,7 +1512,12 @@ begin
     FNameHash := TStringHashW.Create
   else
     FNameHash.Clear;
-  for I := 0 to Count - 1 do
+  // Inverted loop (IniFiles' goes from 0...Count) - otherwise buckets of items going
+  // last are in front and Find returns last item of the same key instead of first
+  // which is expected behaviour according to the docs on IndexOf[Name]:
+  {{ If there is more than one string with a name portion matching the Name parameter,
+     IndexOfName returns the position of the first such string. }
+  for I := Count - 1 downto 0 do
   begin
     Key := Get(I);
     P := PosW(NameValueSeparator, Key);
@@ -1529,7 +1543,8 @@ begin
     FValueHash := TStringHashW.Create
   else
     FValueHash.Clear;
-  for I := 0 to Count - 1 do
+  // Inverted loop (IniFiles' goes from 0...Count) - see UpdateNameHash note.
+  for I := Count - 1 downto 0 do
     if not CaseSensitive then
       FValueHash.Add(UpperCase(Self[I]), I)
     else
@@ -1548,7 +1563,7 @@ constructor TObjectHash.Create(OwnsObjects: Boolean);
 begin
   inherited Create;
   FOwnsObjects := OwnsObjects;
-end;                        
+end;
 
 destructor TObjectHash.Destroy;
 begin
@@ -1584,6 +1599,14 @@ begin
     AddObject(Str, Value)
     else
       Objects[I] := Value;
+end;
+
+function TObjectHash.Extract(Index: Integer): TObject;
+begin
+  Result := Objects[Index];
+  Notify(Index, lnExtracted);
+  FList^[Index].FObject := nil;
+  Delete(Index);
 end;
 
 function TObjectHash.Delete(Obj: TObject): Boolean;
@@ -1623,7 +1646,7 @@ procedure TComponentHash.HandleFreeNotify(Sender: TObject; AComponent: TComponen
 begin
   Extract( IndexOfObject(AComponent) );
 end;
-                                                                          
+
 procedure TComponentHash.Notify(Index: Integer; Action: TListNotification);
 var
   Comp: TComponent;

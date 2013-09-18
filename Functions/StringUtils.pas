@@ -1113,7 +1113,7 @@ begin
         if SubstrPos >= Length(Substr) then
         begin
           Result := StrPos - SubstrPos + 1;
-          Exit
+          Exit;
         end
         else
           Inc(SubstrPos);
