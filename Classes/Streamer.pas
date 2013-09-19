@@ -4,256 +4,418 @@ interface
 
 uses Windows, SysUtils, Classes, ZLibEx;
 
+{
+  @ offset
+
+  [S]  Signature
+  [W]  Version
+  [B]  Flags
+  -- extra, if written --
+  @ HeaderSize
+
+  [DW] Checksum if sfAdler32 in Flags
+  -- data, compressed if sfZlib in Flags --
+}
+
 type
-  TStreamFlahs = set of (ZlibbedStream, Adler32Checksummed);
-  TZCompressionLevel = ZLibEx.TZCompressionLevel;
-
-  EStreamer = class (Exception)
-  end;
-
-    ENonEmptyStreamer = class (EStreamer)
-    public
-      constructor Create(ClassName: String; Op: String);
-    end;
-
-    EStreamSignature = class (EStreamer)
-    public
-      constructor Create(ClassName: String; ExpectedSign, ReadSign: WideString);
-    end;
-
-    EStreamChecksum = class (EStreamer)
-    public
-      constructor Create(ClassName: String; ExpectedChecksuim, ReadChecksum: DWord);
-    end;
-
-    EUnsupportedVersion = class (EStreamer)
-    public
-      constructor Create(ClassName: String; Version, SupportedVersion: Word);
-    end;
+  TStreamerVersion = type Word;
+  TStreamerSignature = type AnsiString;
+  TStreamerFlags = set of (sfZlib, sfAdler32);
+  TStreamerCheck = set of (scSignature, scOlderVersion, scNewerVersion, scChecksum);
+  TStreamerCompressionLevel = ZLibEx.TZCompressionLevel;
 
   TStreamer = class
   protected
-    FSignature: String;
-    FVersion: Word;
-    FFlags: TStreamFlahs;
+    FHost: TObject;
+    FSignature: TStreamerSignature;
+    FVersion: TStreamerVersion;
+    FFlags: TStreamerFlags;
+    FCompressionLevel: TStreamerCompressionLevel;
+    FHeaderSize: Integer;   // set by Write and Read.
+    FChecksum: DWord;       // set by Read.
 
-    FHeaderSize: Word; // is set in WriteTo.
-    FCompressionLevel: TZCompressionLevel;
+    // Reads from Stream.Position. BlindAt relative to current Stream.Position.
+    function CalculateAdler(Stream: TStream; BlindAt: Integer = -1; BlindSize: Integer = 4): DWord;
+    // Stream needs not be positioned.
+    procedure Compress(Stream: TStream; Offset: Integer);
+    // Stream needs not be positioned.
+    function Uncompress(Stream: TStream; Offset: Integer): TMemoryStream;
 
-    procedure WriteAdlerTo(const Stream: TStream);
-    procedure Compress(const Stream: TStream);
-
-    procedure CheckAdlerIn(const Stream: TStream);
-    function Uncompress(const Stream: TStream): TMemoryStream;
+    procedure CheckSignature(const Read: TStreamerSignature; SkipChecks: TStreamerCheck); virtual;
+    procedure CheckVersion(Read: TStreamerVersion; SkipChecks: TStreamerCheck); virtual;
+    procedure WriteExtraHeader(Stream: TStream); virtual;
+    procedure ReadExtraHeader(Stream: TStream); virtual;
+                         
+    procedure SetHost(Value: TObject);
+    procedure SetSignature(const Value: TStreamerSignature);
+    procedure SetVersion(Value: TStreamerVersion);
+    procedure SetFlags(Value: TStreamerFlags);
   public
-    constructor Create(Signature: String; Version: Word);
+    constructor Create(const Signature: TStreamerSignature; Version: TStreamerVersion); virtual;
 
-    property Signature: String read FSignature;
-    property Version: Word read FVersion;
+    // Is included in error messages. Defaults to Self. Never nil.
+    property Host: TObject read FHost write SetHost;
+    property Signature: TStreamerSignature read FSignature write SetSignature;
+    property Version: TStreamerVersion read FVersion write SetVersion;
     // Flahs are written in WriteTo and read in Validate.
-    property Flags: TStreamFlahs read FFlags write FFlags;
+    property Flags: TStreamerFlags read FFlags write SetFlags;
 
-    procedure WriteTo(const Stream: TStream);
-    procedure PostWrite(const Stream: TStream);
-
-    // it can return Stream so check if they are not equal before Freeing its result.
-    function GetStream(const Stream: TStream): TStream;
+    procedure Write(Stream: TStream);
+    // Host class must call this once he has done writing data to Stream (passed to Write).
+    // Offset - start of header data (Stream.Position before Stream was passed to Write).
+    // Flags should not be changed between Write and PostWrite.
+    procedure PostWrite(Stream: TStream; Offset: Integer = 0);
+    // Can return Stream so check if they are not equal before Freeing its result.
+    // Reads from current position so rewind stream if necessary.
+    // Updates Self.Signature, Version and Flags according to those read from Stream.
+    function Read(Stream: TStream; SkipChecks: TStreamerCheck = []): TStream;
+    // Frees Stream; free result when you are done yourself.
+    function ReadAndFree(Stream: TStream; SkipChecks: TStreamerCheck = []): TStream;
   end;
-
-{$L adler32.obj}
-function Adler32(Adler: LongInt; const Buf; Len: Integer): LongInt; external;
-
-implementation
-
-uses StringUtils;
 
 { Exceptions }
 
-constructor ENonEmptyStreamer.Create(ClassName: String; Op: String);
-begin
-  CreateFmt('%s.%s should be used on an empty stream (when Stream.Position = 0).', [ClassName, Op]);
-end;
+type
+  EStreamer = class (Exception)
+    Host: TObject;
+  end;
 
-constructor EStreamSignature.Create(ClassName: String; ExpectedSign, ReadSign: WideString);
-begin
-  CreateFmt('%s expected to read signature "%s" but actually read "%s"', [ClassName, ExpectedSign, ReadSign])
-end;
+  EStreamerEmpty = class (EStreamer)
+    Operation: String;
+    Stream: TStream;
+    constructor Create(Host: TObject; Operation: String; Stream: TStream);
+  end;
 
-constructor EStreamChecksum.Create(ClassName: String; ExpectedChecksuim, ReadChecksum: DWord);
-begin
-  CreateFmt('%s encountered wrong checksum: expected %.8x but calculated %.8x.',
-            [ClassName, ExpectedChecksuim, ReadChecksum]);
-end;
+  EStreamerBadSignature = class (EStreamer)
+    StreamSign, ExpectedSign: TStreamerSignature;
+    constructor Create(Host: TObject; StreamSign, ExpectedSign: TStreamerSignature);
+  end;
 
-constructor EUnsupportedVersion.Create(ClassName: String; Version, SupportedVersion: Word);
-begin
-  CreateFmt('%s cannot load a stream because it''s of unsupported version %s - only supporting %s',
-            [ClassName, FormatVersion(Version), FormatVersion(SupportedVersion)]);
-end;
+  EStreamerBadChecksum = class (EStreamer)
+    StreamSum, ExpectedSum: DWord;
+    constructor Create(Host: TObject; StreamSum, ExpectedSum: DWord);
+  end;
+
+  EStreamerBadVersion = class (EStreamer)
+    StreamVer, SupportedVer: TStreamerVersion;
+    constructor Create(Host: TObject; StreamVer, SupportedVer: TStreamerVersion);
+  end;
+
+  EStreamerCompression = class (EStreamer)
+    ZlibMessage: String;
+    constructor Create(Host: TObject; ZlibMessage: String);
+  end;
+
+implementation
+
+uses StringUtils, Math;
+
+{$L adler32.obj}
+function Adler32(Adler: DWord; const Buf; Len: Integer): DWord; external;
 
 { VersionControl }
 
-constructor TStreamer.Create(Signature: String; Version: Word);
+constructor TStreamer.Create(const Signature: TStreamerSignature; Version: TStreamerVersion);
 begin
-  FSignature := Signature;
-  FVersion := Version;
-  FFlags := [ZlibbedStream, Adler32Checksummed];
+  Host := nil;
+  Self.Signature := Signature;
+  Self.Version := Version;
+  Self.Flags := [sfZlib, sfAdler32];
   FCompressionLevel := zcDefault;
 end;
-
-procedure TStreamer.WriteTo(const Stream: TStream);
-var
-  SpaceForChecksum: DWord;
+                        
+procedure TStreamer.SetHost(Value: TObject);
 begin
-  if Stream.Position <> 0 then
-    raise ENonEmptyStreamer.Create(ClassName, 'WriteLn');
+  if Value = nil then
+    Value := Self;
+  FHost := Value;
+end;
 
-  Stream.Write(FSignature[1], Length(FSignature));
-  Stream.Write(FVersion, SizeOf(FVersion));
-  Stream.Write(FFlags, SizeOf(FFlags));
+procedure TStreamer.SetSignature(const Value: TStreamerSignature);
+begin
+  if Value = '' then
+    raise EInvalidArgument.CreateFmt('%s.SetSignature expects a non-empty string.', [ClassName]);
+  FSignature := Value;
+end;
+
+procedure TStreamer.SetVersion(Value: TStreamerVersion);
+begin
+  if Value = 0 then
+    raise EInvalidArgument.CreateFmt('%s.SetVersion expects a non-zero integer.', [ClassName]);
+  FVersion := Value;
+end;
+        
+procedure TStreamer.SetFlags(Value: TStreamerFlags);
+begin
+  FFlags := Value;
+end;
+
+procedure TStreamer.Write(Stream: TStream);
+var
+  ChecksumStub: DWord;
+begin
   FHeaderSize := Stream.Position;
+  Stream.WriteBuffer(FSignature[1], Length(FSignature));
+  Stream.WriteBuffer(FVersion, SizeOf(FVersion));
+  Stream.WriteBuffer(FFlags, SizeOf(FFlags));
+  WriteExtraHeader(Stream);
+  FHeaderSize := Stream.Position - FHeaderSize;
 
-  SpaceForChecksum := 0;
-  Stream.Write(SpaceForChecksum, 4); // it's not included in the header.
+  ChecksumStub := 0;
+  // Checksum is part of the data stream, not header.
+  Stream.WriteBuffer(ChecksumStub, SizeOf(ChecksumStub));
 end;
 
-procedure TStreamer.PostWrite(const Stream: TStream);
-begin
-  if Adler32Checksummed in FFlags then
-    WriteAdlerTo(Stream);
-  if ZlibbedStream in FFlags then
-    Compress(Stream);
-end;
-
-procedure TStreamer.Compress(const Stream: TStream);
+procedure TStreamer.PostWrite(Stream: TStream; Offset: Integer = 0);
 var
-  Buf, CompressedBuf: Pointer;
-  Size, CompressedSize: Integer;
+  Sum: DWord;
 begin
-  Size := Stream.Size - FHeaderSize;
+  if sfAdler32 in FFlags then
+  begin
+    Stream.Position := Offset;
+    Sum := CalculateAdler(Stream, -1);
+    Stream.Position := Offset + FHeaderSize;
+    Stream.WriteBuffer(Sum, SizeOf(Sum));
+    Stream.Position := Stream.Size;
+  end;
+
+  if sfZlib in FFlags then
+    Compress(Stream, Offset + FHeaderSize);
+end;
+
+function TStreamer.CalculateAdler(Stream: TStream; BlindAt, BlindSize: Integer): DWord;
+const
+  Chunk = 4 * 1024 * 1024;
+var
+  Buf: Pointer;
+  Size: Integer;
+begin
+  if Stream.Size <= Stream.Position then
+    raise EStreamerEmpty.Create(FHost, 'CalculateAdler', Stream);
+
+  Result := 0;
+  repeat
+    Size := Chunk;
+    if (BlindAt >= 0) and (BlindAt < Size) and (BlindAt + BlindSize >= Size) then
+      Inc(Size, BlindSize);
+
+    Size := Min(Size, Stream.Size - Stream.Position);
+    if Size <= 0 then
+      Break;
+
+    GetMem(Buf, Size);
+    try
+      Stream.ReadBuffer(Buf^, Size);
+
+      if BlindAt >= 0 then
+      begin
+        if BlindAt < Size then
+        begin
+          BlindSize := Min(BlindSize, Size - BlindAt - BlindSize);
+          if BlindSize > 0 then
+            FillChar(Pointer(DWord(Buf) + DWord(BlindAt))^, BlindSize, 0);
+        end;
+
+        Dec(BlindAt, Size);
+      end;
+
+      Result := Adler32(Result, Buf^, Size);
+    finally
+      FreeMem(Buf, Size);
+    end;
+  until False;
+end;
+
+procedure TStreamer.Compress(Stream: TStream; Offset: Integer);
+var
+  Buf, CompBuf: Pointer;
+  Size, CompSize: Integer;
+begin
+  Size := Stream.Size - Offset;
+  if Size <= 0 then
+    raise EStreamerEmpty.Create(FHost, 'Compress', Stream);
+
   GetMem(Buf, Size);
   try
-    Stream.Position := FHeaderSize;
-    Stream.Read(Buf^, Size);
-
-    ZCompress(Buf, Size, CompressedBuf, CompressedSize, FCompressionLevel);
+    Stream.Position := Offset;
+    Stream.ReadBuffer(Buf^, Size);
     try
-      if CompressedSize <> 0 then
-      begin
-        Stream.Size := FHeaderSize + CompressedSize;
-        Stream.Position := FHeaderSize;
-        Stream.Write(CompressedBuf^, CompressedSize);
-      end;
-    finally
-      FreeMem(CompressedBuf, CompressedSize);
+      ZCompress(Buf, Size, CompBuf, CompSize, FCompressionLevel);
+    except
+      on E: EZLibError do
+        raise EStreamerCompression.Create(FHost, E.Message);
     end;
   finally
     FreeMem(Buf, Size);
   end;
-end;
 
-procedure TStreamer.WriteAdlerTo(const Stream: TStream);
-var
-  Buf: Pointer;
-  Adler: Integer;
-begin
-  GetMem(Buf, Stream.Size);
+  if CompSize = 0 then
+    raise EStreamerEmpty.Create(FHost, 'ZCompress', Stream);
+
   try
-    Stream.Position := 0;
-    Stream.Read(Buf^, Stream.Size);
-
-    Adler := Adler32(0, Buf^, Stream.Size);
-    Stream.Position := FHeaderSize;
-    Stream.Write(Adler, 4);
+    Stream.Size := Offset + CompSize;
+    Stream.Position := Offset;
+    Stream.WriteBuffer(CompBuf^, CompSize);
+    Stream.Size := Stream.Position;
   finally
-    FreeMem(Buf, Stream.Size);
+    FreeMem(CompBuf, CompSize);
   end;
 end;
-
-function TStreamer.GetStream(const Stream: TStream): TStream;
-var
-  SignatureRead: String;
-  VersionRead: Word;
-begin
-  if Stream.Position <> 0 then
-    raise ENonEmptyStreamer.Create(ClassName, 'GetStream');
-
-  SetLength(SignatureRead, Length(FSignature));
-  Stream.Read(SignatureRead[1], Length(SignatureRead));
-  if FSignature <> SignatureRead then
-    raise EStreamSignature.Create(ClassName, FSignature, SignatureRead);
-
-  Stream.Read(VersionRead, SizeOf(FVersion));
-  if FVersion <> VersionRead then
-    raise EUnsupportedVersion.Create(ClassName, VersionRead, FVersion);
-
-  Stream.Read(FFlags, SizeOf(FFlags));
-  FHeaderSize := Stream.Position;
-
-  if ZlibbedStream in FFlags then
-    Result := Uncompress(Stream)
-    else
-      Result := Stream;
-
-  if Adler32Checksummed in FFlags then
-    CheckAdlerIn(Result);
-
-  Result.Position := FHeaderSize + 4;
-end;
-
-function TStreamer.Uncompress(const Stream: TStream): TMemoryStream;
+                         
+function TStreamer.Uncompress(Stream: TStream; Offset: Integer): TMemoryStream;
 var
   Buf, Uncomp: Pointer;
   Size, UncompSize: Integer;
 begin
-  Result := NIL;
+  Size := Stream.Size - Offset;
 
-  Size := Stream.Size - FHeaderSize;
   GetMem(Buf, Size);
   try
-    Stream.Position := FHeaderSize;
+    Stream.Position := Offset;
     Stream.Read(Buf^, Size);
-
-    ZDecompress(Buf, Size, Uncomp, UncompSize);
     try
-      if UncompSize <> 0 then
-      begin
-        Result := TMemoryStream.Create;
-        Result.Size := FHeaderSize + UncompSize;
-        Result.Position := 0;
-
-        Stream.Position := 0;
-        Result.CopyFrom(Stream, FHeaderSize);
-        Result.Write(Uncomp^, UncompSize);
-      end;
-    finally
-      FreeMem(Uncomp, UncompSize);
+      ZDecompress(Buf, Size, Uncomp, UncompSize);
+    except
+      on E: EZLibError do
+        raise EStreamerCompression.Create(FHost, E.Message);
     end;
   finally
     FreeMem(Buf, Size);
   end;
+
+  Result := TMemoryStream.Create;
+  try
+    if UncompSize <> 0 then
+      try
+        Result.Size := Offset + UncompSize;
+        Stream.Position := 0;
+        Result.CopyFrom(Stream, Offset);
+        Result.WriteBuffer(Uncomp^, UncompSize);
+      finally
+        FreeMem(Uncomp, UncompSize);
+      end;
+
+    Result.Position := Offset;
+  except
+    Result.Free;
+    raise;
+  end;
 end;
 
-procedure TStreamer.CheckAdlerIn(const Stream: TStream);
+function TStreamer.Read(Stream: TStream; SkipChecks: TStreamerCheck): TStream;
 var
-  Buf: Pointer;
-  AdlerRead, AdlerCalculated: DWord;
+  Signature: TStreamerSignature;
+  Version: TStreamerVersion;
+  Offset: Integer;
+  Checksum: DWord;
 begin
-  GetMem(Buf, Stream.Size);
-  try
-    Stream.Position := 0;
-    Stream.Read(Buf^, Stream.Size);
-    DWord(Ptr( DWord(Buf) + FHeaderSize )^) := 0;
+  Offset := Stream.Position;
 
-    Stream.Position := FHeaderSize;
-    Stream.Read(AdlerRead, 4);
+  SetLength(Signature, Length(FSignature));
+  Stream.ReadBuffer(Signature[1], Length(FSignature));
+  CheckSignature(Signature, SkipChecks);
+  FSignature := Signature;
 
-    AdlerCalculated := Adler32(0, Buf^, Stream.Size);
-    if AdlerRead <> AdlerCalculated then
-      raise EStreamChecksum.Create(ClassName, AdlerCalculated, AdlerRead);
-  finally
-    FreeMem(Buf, Stream.Size);
+  Stream.ReadBuffer(Version, SizeOf(Version));
+  CheckVersion(Version, SkipChecks);
+  FVersion := Version;
+
+  Stream.ReadBuffer(FFlags, SizeOf(FFlags));
+  ReadExtraHeader(Stream);
+  FHeaderSize := Stream.Position - Offset;
+
+  if sfZlib in FFlags then
+    Result := Uncompress(Stream, Offset + FHeaderSize)
+  else
+    Result := Stream;
+
+  if sfAdler32 in FFlags then
+  begin
+    Result.ReadBuffer(FChecksum, SizeOf(FChecksum));
+
+    if not (scChecksum in SkipChecks) then
+    begin
+      Result.Position := Offset;
+      Checksum := CalculateAdler(Result, FHeaderSize);
+      if Checksum <> FChecksum then
+        raise EStreamerBadChecksum.Create(FHost, Checksum, FChecksum);
+    end;
   end;
+
+  Result.Position := Offset + FHeaderSize + SizeOf(FChecksum);
+end;            
+
+procedure TStreamer.CheckSignature(const Read: TStreamerSignature; SkipChecks: TStreamerCheck);
+begin
+  if not (scSignature in SkipChecks) and (Read <> FSignature) then
+    raise EStreamerBadSignature.Create(FHost, Read, FSignature);
+end;
+
+procedure TStreamer.CheckVersion(Read: TStreamerVersion; SkipChecks: TStreamerCheck);
+begin
+  if Read <> FVersion then
+    if (not (scOlderVersion in SkipChecks) and (Read < FVersion)) or
+       (not (scNewerVersion in SkipChecks) and (Read > FVersion)) then
+      raise EStreamerBadVersion.Create(FHost, Read, FVersion);
+end;
+
+function TStreamer.ReadAndFree(Stream: TStream; SkipChecks: TStreamerCheck): TStream;
+begin
+  Result := Read(Stream, SkipChecks);
+  if Result <> Stream then
+    Stream.Free;
+end;             
+
+procedure TStreamer.WriteExtraHeader(Stream: TStream);
+begin
+end;
+
+procedure TStreamer.ReadExtraHeader(Stream: TStream);
+begin
+end;
+
+{ Exceptions }
+
+constructor EStreamerEmpty.Create(Host: TObject; Operation: String; Stream: TStream);
+begin
+  Self.Host := Host;
+  Self.Operation := Operation;
+  Self.Stream := Stream;
+  CreateFmt('Attempted to %s.%s on exhausted stream.', [Host.ClassName, Operation]);
+end;
+
+constructor EStreamerBadSignature.Create(Host: TObject; StreamSign, ExpectedSign: TStreamerSignature);
+begin
+  Self.Host := Host;
+  Self.StreamSign := StreamSign;
+  Self.ExpectedSign := ExpectedSign;
+  CreateFmt('%s stream must start with signature ''%s'' but it starts with ''%s''.',
+            [Host.ClassName, ExpectedSign, StreamSign])
+end;
+
+constructor EStreamerBadChecksum.Create(Host: TObject; StreamSum, ExpectedSum: DWord);
+begin
+  Self.Host := Host;
+  Self.StreamSum := StreamSum;
+  Self.ExpectedSum := ExpectedSum;
+  CreateFmt('%s stream checksum (%.8X) is wrong - expected %.8X.',
+            [Host.ClassName, StreamSum, ExpectedSum]);
+end;
+
+constructor EStreamerBadVersion.Create(Host: TObject; StreamVer, SupportedVer: TStreamerVersion);
+begin
+  Self.Host := Host;
+  Self.StreamVer := StreamVer;
+  Self.SupportedVer := SupportedVer;
+  CreateFmt('Attempted to load %s stream of unsupported version (%s) - current version is %s.',
+            [Host.ClassName, FormatVersion(StreamVer), FormatVersion(SupportedVer)]);
+end;
+
+constructor EStreamerCompression.Create(Host: TObject; ZlibMessage: String);
+begin
+  Self.Host := Host;
+  Self.ZlibMessage := ZlibMessage;
+  CreateFmt('Zlib reports compression error (''%s'') for %s.', [ZlibMessage, Host.ClassName]);
 end;
 
 end.
