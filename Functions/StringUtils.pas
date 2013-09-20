@@ -122,8 +122,11 @@ function CountSubstr(const Substr, Str: WideString): Integer;
 
 function EscapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
 function UnescapeString(const Str: WideString; CharsToEscape: WideString = ''): WideString;
-function BinToHex(const Buf; Size: Integer; Delim: String = ''): String;  // outputs in upper case.
-function HexToBin(Text: String): String;                // ignores char case of Text.
+// outputs in upper case.
+function BinToHex(const Buf; Size: Integer; Delim: String = ''): String; overload;
+function BinToHex(const Buf: String; Delim: String = ''): String; overload;
+function HexToBin(Text: String): String;      // ignores char case of Text.
+function SoftHexToBin(Text: String): String;  // ignores char case and spaces.
 
 function FormatVersion(Version: Word): WideString;
 // formats date in format $DDMMYYYY. This format is useful because it's locale-independent.
@@ -803,6 +806,14 @@ begin
   end;
 end;
 
+function BinToHex(const Buf: String; Delim: String = ''): String;
+begin
+  if Buf = '' then
+    Result := ''
+  else
+    Result := BinToHex(Buf[1], Length(Buf), Delim)
+end;
+
 function HexToBin(Text: String): String;
 const
   Convert: array['0'..'f'] of SmallInt =
@@ -825,6 +836,16 @@ begin
       raise EConvertError.CreateFmt('Hex string "%s" contains wrong symbol (0-9, A-F, a-f allowed).', [Text]);
     Result[I + 1] := Char((Convert[Text[I * 2 + 1]] shl 4) + Convert[Text[I * 2 + 2]]);
   end;
+end;
+
+function SoftHexToBin(Text: String): String;
+var
+  I: Integer;
+begin
+  for I := Length(Text) downto 1 do
+    if Text[I] < #33 then
+      Delete(Text, I, 1);
+  Result := HexToBin(Text);
 end;
 
 function IsDelimiter(const Delimiters, S: WideString; Index: Integer): Boolean;

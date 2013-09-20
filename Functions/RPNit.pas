@@ -14,8 +14,9 @@ type
   TRpnOperatorClass = class of TRpnOperator;
   TRpnVariableClass = class of TRpnVariable;
 
-  TRpnValueKind = set of (valNum, valBool, valBytes, valStr, varCustom);
+  TRpnValueKind = set of (valNum, valBool, valBytes, valStr, valCustom);
 
+  PRpnScalar = ^TRpnScalar;
   TRpnScalar = record
     Kind: TRpnValueKind;
 
@@ -230,7 +231,7 @@ type
       function Value(Eval: TRpnEvaluator): TRpnScalar; override;
     end;
 
-      // This class isn't used in this unit but can be used as a base class for apps using RPNit.
+      { This isn't used in this unit but can be used as a base class in apps using RPNit. }
       TRpnFuncVariable = class (TRpnVariable)
       protected
         function ExecFunc(Eval: TRpnEvaluator; const Name: WideString): TRpnScalar; virtual; abstract;
@@ -278,6 +279,23 @@ type
       TRpnModulus = class (TRpnMathOperator)
       protected
         function Eval(A, B: Double): Double; override;
+      end;
+
+    TRpnCompOperator = class (TRpnOperator)
+    protected
+      function Holds(A, B: Double): Boolean; virtual; abstract;
+    public
+      function Execute(Eval: TRpnEvaluator): TRpnScalar; override;
+    end;
+
+      TRpnMore = class (TRpnCompOperator)
+      protected
+        function Holds(A, B: Double): Boolean; override;
+      end;
+
+      TRpnLess = class (TRpnCompOperator)
+      protected
+        function Holds(A, B: Double): Boolean; override;
       end;
 
   TRpnCompSettings = record
@@ -1004,7 +1022,7 @@ begin
             else
               Result := FloatToStr(Num)
           else if valBool in Kind then
-            Result := BoolToStr(Bool)
+            Result := BoolToStr(Bool, True)
             else
               Result := Null;
 end;
@@ -1141,8 +1159,20 @@ var
     end;
 
     procedure NumOperand;
+    var
+      Sign: ShortInt;
     begin
-      Result.Add(TRpnConst.Create(RpnNum( StrToFloatRPN(CutName('0123456789,.')) )));
+      Sign := +1;
+
+      case Char(Expr[Pos]) of
+      '-':  begin
+              Sign := -1;
+              Inc(Pos);
+            end;
+      '+':  Inc(Pos);
+      end;
+
+      Result.Add(TRpnConst.Create(RpnNum( Sign * StrToFloatRPN(CutName('0123456789,.')) )));
     end;
 
     procedure Variable;
@@ -1308,7 +1338,7 @@ var
   I: Integer;
   Item: TObject;
 begin
-  Result := RpnNum(0);
+  Result := RpnNum(0);    // compiler warning, not used.
 
   for I := 0 to FCompiled.Count - 1 do
   begin
@@ -1397,6 +1427,33 @@ function TRpnModulus.Eval(A, B: Double): Double;
 begin
   Result := A - Int(A / B) * B;
 end;
+                   
+{ TRpnCompOperator }
+
+function TRpnCompOperator.Execute(Eval: TRpnEvaluator): TRpnScalar;
+var
+  A: Double;
+begin
+  if Eval.Stack.Count < 2 then
+    raise ENotEnoughRpnArguments.Create(ClassName, 2, Eval.Stack.Count);
+
+  A := Eval.Stack.PopNum;
+  Result := RpnBool( Self.Holds(Eval.Stack.PopNum, A) );
+end;
+
+{ TRpnMore }
+
+function TRpnMore.Holds(A, B: Double): Boolean;
+begin
+  Result := A > B;
+end;
+
+{ TRpnLess }
+
+function TRpnLess.Holds(A, B: Double): Boolean;
+begin
+  Result := A < B;
+end;
 
 initialization
   ZeroMemory(@DefaultRpnSettings, SizeOf(DefaultRpnSettings));
@@ -1409,6 +1466,11 @@ initialization
   RegisterDefaultRpnOperator('/', TRpnDivide);
   RegisterDefaultRpnOperator('^', TRpnPower);
   RegisterDefaultRpnOperator('%', TRpnModulus);
+
+  { Equality operators (= <> !=) are not part of standard pack because of ambiguous notion of
+    'equality' (are valBytes and valNum equal? if so, when?). For ops below this is less problematic. }
+  RegisterDefaultRpnOperator('>', TRpnMore);
+  RegisterDefaultRpnOperator('<', TRpnLess);
 
 finalization
   if CachedExprs <> NIL then

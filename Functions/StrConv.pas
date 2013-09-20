@@ -12,8 +12,9 @@ const
 
 function MinStrConvBufSize(SrcCodepage: DWord; Str: String): DWord; overload;
 function MinStrConvBufSize(DestCodepage: DWord; Wide: WideString): DWord; overload;
-function ToWideString(SrcCodepage: DWord; Str: String; BufSIze: Integer = -1): WideString;
-function FromWideString(DestCodepage: DWord; Str: WideString; BufSIze: Integer = -1): String;
+function ToWideString(SrcCodepage: DWord; Str: String; BufSize: Integer = -1): WideString;
+// If Fail = False replaces unconvertable symbols with default OS symbol (usually '?').
+function FromWideString(DestCodepage: DWord; Str: WideString; BufSize: Integer = -1; Fail: Boolean = False): String;
 
 function CharsetToID(Str: String): DWord;
 function IdToCharset(ID: DWord; GetDescription: Boolean = False): String;
@@ -30,7 +31,7 @@ begin
   Result := WideCharToMultiByte(DestCodepage, 0, PWideChar(Wide), -1, NIL, 0, NIL, NIL)
 end;
 
-function ToWideString(SrcCodepage: DWord; Str: String; BufSIze: Integer = -1): WideString;
+function ToWideString(SrcCodepage: DWord; Str: String; BufSize: Integer = -1): WideString;
 begin
   if BufSize = -1 then
     BufSize := MinStrConvBufSize(SrcCodepage, Str);
@@ -39,13 +40,21 @@ begin
   SetLength(Result, BufSize - 1)
 end;
 
-function FromWideString(DestCodepage: DWord; Str: WideString; BufSIze: Integer = -1): String;
+function FromWideString(DestCodepage: DWord; Str: WideString; BufSize: Integer = -1; Fail: Boolean = False): String;
+var
+  DefCharUsedPtr: PBool;
 begin
   if BufSize = -1 then
     BufSize := MinStrConvBufSize(DestCodepage, Str);
   SetLength(Result, BufSIze);
-  WideCharToMultiByte(DestCodepage, 0, PWideChar(Str), -1, PChar(Result), BufSize, NIL, NIL);
-  SetLength(Result, BufSize - 1)
+  if Fail then
+    DefCharUsedPtr := @Fail
+  else
+    DefCharUsedPtr := NIL;
+  WideCharToMultiByte(DestCodepage, 0, PWideChar(Str), -1, PChar(Result), BufSize, NIL, DefCharUsedPtr);
+  SetLength(Result, BufSize - 1);
+  if Fail then
+    raise EConvertError.CreateFmt('Codepage %d cannot represent all symbols of given string ''%s''.', [DestCodepage, Copy(Str, 1, 50)]);
 end;
 
 function CharsetToID(Str: String): DWord;
