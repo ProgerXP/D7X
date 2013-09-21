@@ -958,5 +958,5 @@ end;
 initialization
 
 finalization
-  FreeAndNil(LinearCache);
+  LinearCache.Free;
 end.

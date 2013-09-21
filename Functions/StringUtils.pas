@@ -71,30 +71,18 @@ function DequotedStr(const S: WideString; AQuote: WideChar): WideString;
 function StrEndW(const Str: PWideChar): PWideChar;
 function StrScanW(Str: PWideChar; Chr: WideChar): PWideChar;
 
-
-
   { Unlike AnsiQuotedStr, this function won't surround result with CharToQuote. }
   function Quote(const Str, CharToQuote: WideString; StartAt: Integer = 1): WideString;
-
   { Unlike AnsiExtractQuotedStr, Str doesn't need to start with QuoteChar; however, it must
     end with it (EndPos will be set AFTER its position). If there was no ending QuoteChar
     found EndPos is set to -1 and Result is undefined. If quote char was last char in Str
-
     EndPos will be set to Length(Str) + 1. }
-
   function Unquote(const Str, QuoteChar: WideString; out EndPos: Integer; StartAt: Integer): WideString; overload;
-
   // will raise EConvertError if QuoteChar was not found in Str (i.e. if EndPos was set to -1).
-
   function Unquote(const Str, QuoteChar: WideString; StartAt: Integer = 1): WideString; overload;
-
-
   function PascalQuote(const Str: WideString): WideString;
-
   // sets Pos to -1 if string ended properly on an apostrophe ('), otherwise Pos is set
-
   // after the closing apostrophe if it was found earlier or past the end of Str if there was none.
-
   function PascalUnquote(const Str: WideString; var Pos: Integer): WideString; overload;
   function PascalUnquote(Str: WideString; MustStartWithQuote: Boolean = True): WideString; overload;
 
