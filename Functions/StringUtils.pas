@@ -114,7 +114,7 @@ function UnescapeString(const Str: WideString; CharsToEscape: WideString = ''): 
 function BinToHex(const Buf; Size: Integer; Delim: String = ''): String; overload;
 function BinToHex(const Buf: String; Delim: String = ''): String; overload;
 function HexToBin(Text: String): String;      // ignores char case of Text.
-function SoftHexToBin(Text: String): String;  // ignores char case and spaces.
+function SoftHexToBin(Text: String): String;  // ignores everything but a..Z and 0..9.
 
 function FormatVersion(Version: Word): WideString;
 // formats date in format $DDMMYYYY. This format is useful because it's locale-independent.
@@ -792,6 +792,8 @@ begin
     Result[ItemSize * I + 2] := Convert[TBuf(Buf)[I] and $F];
     Move(Delim[1], Result[ItemSize * I + 3], Length(Delim));
   end;
+
+  SetLength(Result, ItemSize * Size - Length(Delim));
 end;
 
 function BinToHex(const Buf: String; Delim: String = ''): String;
@@ -831,7 +833,7 @@ var
   I: Integer;
 begin
   for I := Length(Text) downto 1 do
-    if Text[I] < #33 then
+    if not (Text[I] in ['0'..'f']) then
       Delete(Text, I, 1);
   Result := HexToBin(Text);
 end;

@@ -178,8 +178,9 @@ type
 
     function Reverse: Boolean;
     function GetResult: TRpnScalar; virtual;
+    function Debug: WideString;
   end;
-                 
+
   TRpnCompSettings = record
     CacheCompiled: Boolean;   // doesn't work if Operators <> NIL.
     PrefixNotation: Boolean;
@@ -199,6 +200,7 @@ type
     class procedure Cache(const Expr: WideString; const Settings: TRpnCompSettings; Compiled: TCompiledRPN);
 
     procedure Reverse;
+    function Debug: WideString;
   end;
 
   { FVariables is not freed. }
@@ -210,7 +212,7 @@ type
     FOperators: TRpnOperators;
     FVariables: TRpnVariables;
     FVarCallback: TRpnVarCallback;
-    
+
     function GetResult: TRpnScalar; virtual;
   public
     constructor Create(Compiled: TCompiledRPN); virtual;
@@ -329,7 +331,7 @@ function RpnBool(Value: Boolean): TRpnScalar;
 function RpnBytes(const Bytes: String): TRpnScalar;
 function RpnStr(const Str: WideString): TRpnScalar;
 function RpnKindToStr(Kind: TRpnValueKind): String;
-function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''): WideString;
+function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''''): WideString;
 function RpnValueToInt(Value: TRpnScalar): Integer;
 
 // raises EDuplicateRpnOperator:
@@ -361,7 +363,7 @@ var
   FRpnVarChars: WideString = 'abcdefghijklmnopqrstuvwxyz0123456789_';
   CachedExprs: TObjectHash;   // of TCompiledRPN
   DefaultOperators: TRpnOperators;
-                    
+
 { Functions }
 
 function StrToFloatRPN(Str: WideString; Expr: WideString = ''): Double;
@@ -436,20 +438,22 @@ function RpnKindToStr(Kind: TRpnValueKind): String;
 begin
   Result := '';
 
+  if valStr in Kind then
+    Result := Result + 's';
+  if valBytes in Kind then
+    Result := Result + 'r';
   if valNum in Kind then
     Result := Result + 'i';
   if valBool in Kind then
     Result := Result + 'b';
-  if valBytes in Kind then
-    Result := Result + 'y';
-  if valStr in Kind then
-    Result := Result + 's';
+  if valCustom in Kind then
+    Result := Result + 'c';
 
   if Result = '' then
     Result := '-';
 end;
 
-function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''): WideString;
+function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''''): WideString;
 begin
   with Value do
     if valStr in Kind then
@@ -561,6 +565,16 @@ begin
   finally
     Eval.Free;
   end;
+end;
+
+function DebugDump(Obj: TObject): WideString;
+begin
+  if Obj is TRpnConst then
+    Result := RpnValueToStr(TRpnConst(Obj).FValue)
+  else if Obj is TRpnVariable then
+    Result := TRpnVariable(Obj).Name
+  else
+    Result := Copy(Obj.ClassName, 2, MaxInt);
 end;
 
 { Exceptions }
@@ -1088,8 +1102,17 @@ begin
         raise EEmptyRpnStack.Create;
 end;
 
+function TRpnValueStack.Debug: WideString;
+var
+  I: Integer;
+begin
+  for I := 0 to FCount - 1 do
+    Result := Result + ' ' + RpnKindToStr(FValues[I].Kind) + RpnValueToStr(FValues[I], '') + '.';
+  System.Delete(Result, 1, 1);
+end;
+
 { TCompiledRPN }
-                  
+
 class function TCompiledRPN.CompileCaching(const Expr: WideString; const Settings: TRpnCompSettings): TCompiledRPN;
 begin
   Result := Cached(Expr, Settings);
@@ -1245,7 +1268,7 @@ begin
     raise;
   end;
 end;
-                   
+
 class function TCompiledRPN.Normalize(const Expr: WideString): WideString;
 begin
   Result := Trim(Expr);
@@ -1281,6 +1304,15 @@ var
 begin
   for I := 0 to Count div 2 - 1 do
     Exchange(I, Count - I - 1);
+end;
+
+function TCompiledRPN.Debug: WideString;
+var
+  I: Integer;
+begin
+  for I := 0 to Count - 1 do
+    Result := Result + ' ' + DebugDump(Items[I]);
+  System.Delete(Result, 1, 1);
 end;
 
 { TRpnConst }
@@ -1436,7 +1468,7 @@ function TRpnModulus.Eval(A, B: Double): Double;
 begin
   Result := A - Int(A / B) * B;
 end;
-                   
+
 { TRpnCompOperator }
 
 function TRpnCompOperator.Execute(Eval: TRpnEvaluator): TRpnScalar;
