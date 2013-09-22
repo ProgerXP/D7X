@@ -14,11 +14,12 @@ type
   TRpnOperatorClass = class of TRpnOperator;
   TRpnVariableClass = class of TRpnVariable;
 
-  TRpnValueKind = set of (valNum, valBool, valBytes, valStr, valCustom);
+  TRpnValueKind = (valNum, valBool, valBytes, valStr, valCustom);
+  TRpnValueKinds = set of TRpnValueKind;
 
   PRpnScalar = ^TRpnScalar;
   TRpnScalar = record
-    Kind: TRpnValueKind;
+    Kind: TRpnValueKinds;
 
     Num: Double;
     Bool: Boolean;
@@ -67,7 +68,7 @@ type
       end;
 
       EWrongTopStackValueKind = class (ERpnEvaluation)
-        constructor Create(Got, Expected: TRpnValueKind);
+        constructor Create(Got, Expected: TRpnValueKinds);
       end;
 
       EIntegerExpectedOnStackTop = class (ERpnEvaluation)
@@ -330,7 +331,7 @@ function RpnNum(Num: Integer): TRpnScalar; overload;
 function RpnBool(Value: Boolean): TRpnScalar;
 function RpnBytes(const Bytes: String): TRpnScalar;
 function RpnStr(const Str: WideString): TRpnScalar;
-function RpnKindToStr(Kind: TRpnValueKind): String;
+function RpnKindToStr(Kind: TRpnValueKinds): String;
 function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''''): WideString;
 function RpnValueToInt(Value: TRpnScalar): Integer;
 
@@ -434,7 +435,7 @@ begin
   Result.Str := Str;
 end;
 
-function RpnKindToStr(Kind: TRpnValueKind): String;
+function RpnKindToStr(Kind: TRpnValueKinds): String;
 begin
   Result := '';
 
@@ -627,7 +628,7 @@ begin
   CreateFmt('Attempted to %s from empty TRpnValueStack.', [Operation]);
 end;
 
-constructor EWrongTopStackValueKind.Create(Got, Expected: TRpnValueKind);
+constructor EWrongTopStackValueKind.Create(Got, Expected: TRpnValueKinds);
 begin
   CreateFmt('Expected a %s value on top of TRpnValueStack but got %s.', [RpnKindToStr(Expected), RpnKindToStr(Got)]);
 end;

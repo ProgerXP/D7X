@@ -12,6 +12,12 @@ type
   TCallOnEachLineInCallback = function (Line: WideString; Data: Pointer): Boolean;
   TCallOnEachLineInCallback_OO = function (Line: WideString; Data: DWord): Boolean of object;
 
+  TCallOnEachLineOptions_OO = record
+    Callback: TCallOnEachLineInCallback_OO;
+    UserData: DWord;
+    EOLN: WideString;
+  end;
+
   TMaskMatchInfo = record
     Matched: Boolean;
     StrPos: Word;
@@ -35,12 +41,6 @@ type
     end;
   end;
 
-  TCallOnEachLineOptions_OO = record
-    Callback: TCallOnEachLineInCallback_OO;
-    UserData: DWord;
-    EOLN: WideString;
-  end;
-
 // todo: make Lower/UpperCase wrapper for Wide*Case.
 // todo: reconvertion table for Lower/UpperCase?
 // todo: use StringTypeW in RemoveNonWordChars?
@@ -51,7 +51,7 @@ function TryStrToFloatStrict(const S: String; out Value: Single;
   const FormatSettings: TFormatSettings): Boolean; overload;
 function TryStrToFloatStrict(const S: String; out Value: Double;
   const FormatSettings: TFormatSettings): Boolean; overload;
-function DetectEolnStyleIn(Str: WideString): WideString;
+function DetectEolnStyleIn(const Str: WideString): WideString;
 
 // not more than 65536 resulting pieces are supported.
 function ExplodeUnquoting(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
@@ -139,7 +139,8 @@ function CallOnEachLineIn(Str: WideString; const Callback: TCallOnEachLineInCall
   const UserData: Pointer = NIL): DWord; overload;
 function CallOnEachLineIn(Str: WideString; const Callback: TCallOnEachLineInCallback_OO;
   const UserData: DWord = 0): DWord; overload;
-function CallOnEachLineIn(Str: WideString; Options: TCallOnEachLineOptions_OO): DWord; overload;
+// Calls also on empty lines. If Str = '' doesn't call. If Str = EOLN calls twice.
+function CallOnEachLineIn(const Str: WideString; Options: TCallOnEachLineOptions_OO): DWord; overload;
 
 function CompareStr(const S1, S2: WideString; Flags: DWord = 0): Integer;
 function CompareText(const S1, S2: WideString): Integer;
@@ -215,7 +216,7 @@ begin
       Result := False;
 end;
 
-function DetectEolnStyleIn(Str: WideString): WideString;
+function DetectEolnStyleIn(const Str: WideString): WideString;
 const
   CR = #13;
   LF = #10;
@@ -813,6 +814,7 @@ const
      -1,10,11,12,13,14,15);
 var
   I: Integer;
+  Ch: SmallInt;
 begin
   if Length(Text) mod 2 <> 0 then
     raise EConvertError.CreateFmt('Hex string must have even length, %d given.', [Length(Text)]);
@@ -822,9 +824,14 @@ begin
 
   for I := 0 to Length(Text) div 2 - 1 do
   begin
-    if not (Text[I * 2 + 1] in ['0'..'f']) or not (Text[I * 2 + 2] in ['0'..'f']) then
-      raise EConvertError.CreateFmt('Hex string "%s" contains wrong symbol (0-9, A-F, a-f allowed).', [Text]);
-    Result[I + 1] := Char((Convert[Text[I * 2 + 1]] shl 4) + Convert[Text[I * 2 + 2]]);
+    if (Text[I * 2 + 1] in ['0'..'f']) and (Text[I * 2 + 2] in ['0'..'f']) then
+      Ch := (Convert[Text[I * 2 + 1]] shl 4) + Convert[Text[I * 2 + 2]]
+    else
+      Ch := -1;
+    if Ch = -1 then
+      raise EConvertError.CreateFmt('Hex string "%s" contains wrong symbol (0-9, A-F, a-f allowed).', [Text])
+    else
+      Result[I + 1] := Char(Ch);
   end;
 end;
 
@@ -833,7 +840,7 @@ var
   I: Integer;
 begin
   for I := Length(Text) downto 1 do
-    if not (Text[I] in ['0'..'f']) then
+    if not (Text[I] in ['a'..'z', 'A'..'Z', '0'..'9', '_']) then
       Delete(Text, I, 1);
   Result := HexToBin(Text);
 end;
@@ -1259,27 +1266,36 @@ begin
   Result := CallOnEachLineIn(Str, Options);
 end;
 
-function CallOnEachLineIn(Str: WideString; Options: TCallOnEachLineOptions_OO): DWord;
+function CallOnEachLineIn(const Str: WideString; Options: TCallOnEachLineOptions_OO): DWord;
 var
-  I, PrevNewLine: Integer;
-  EOLN: WideString;
+  I, LineStart: Integer;
 begin
   Result := 0;
-  PrevNewLine := 1;
-  EOLN := Options.EOLN;
+  LineStart := 1;
 
-  if (Str <> '') and (Copy(Str, Length(Str) + Length(EOLN), Length(EOLN)) <> EOLN) then
-    Str := Str + EOLN;
+  with Options do
+  begin
+    if EOLN = '' then
+      raise EInvalidArgument.Create('Empty EOLN given to CallOnEachLineIn.')
+    else if Str = '' then
+      Exit;
 
-  for I := 1 to Length(Str) do
-    if Copy(Str, I, Length(EOLN)) = EOLN then
-    begin
-      Inc(Result);
-      if I > PrevNewLine then
-        if Options.Callback(TrimRight( Copy(Str, PrevNewLine, I - PrevNewLine), #13#10 ), Options.UserData) then
+    I := 1;
+
+    while I <= Length(Str) + 1 do
+      if (I > Length(Str)) and (LineStart + 1 = I) then
+        Break
+      else if (I > Length(Str)) or ( (Str[I] = EOLN[1]) and (Copy(Str, I, Length(EOLN)) = EOLN) ) then
+      begin
+        Inc(Result);
+        if Callback(Copy(Str, LineStart, I - LineStart), UserData) then
           Break;
-      PrevNewLine := I + Length(EOLN);
-    end;
+        LineStart := I + Length(EOLN);
+        Inc(I, Length(EOLN));
+      end
+      else
+        Inc(I);
+  end;
 end;
 
 function UpperCase(const Str: WideString): WideString;
