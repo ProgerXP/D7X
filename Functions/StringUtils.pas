@@ -126,7 +126,7 @@ function FormatSize(Bytes: DWord): WideString;
 
 function PosLast(const Substr, Str: String; Start: Word = 1): Integer;
 function PosLastW(const Substr, Str: WideString; Start: Word = 1): Integer;
-function PosW(const Substr, Str: WideString; Start: Word = 1): Integer;
+function PosW(const Substr, Str: WideString; StartPos: Integer = 1; EndPos: Integer = MaxInt): Integer;
 
 // SysUtils has Trim, TrimLeft, TrimRight that works as Chars = ' ' so these has Chars required.
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
@@ -1109,34 +1109,37 @@ begin
   Result := GenericFormat(Bytes, StringUtilsLanguage.SizeFormat);
 end;
 
-function PosW(const Substr, Str: WideString; Start: Word = 1): Integer;
+function PosW(const Substr, Str: WideString; StartPos: Integer = 1; EndPos: Integer = MaxInt): Integer;
 var
-  StrPos, SubstrPos: Integer;
+  SubstrPos: Integer;
 begin
   Result := 0;
   if Substr = '' then
     Exit;
-
-	StrPos := Max(1, Start);
+                 
+  if EndPos > Length(Str) then
+    EndPos := Length(Str);
+  if StartPos < 1 then
+  	StartPos := 1;
   SubstrPos := 1;
 
-  while StrPos <= Length(Str) do
+  while StartPos <= EndPos do
   begin
-    if Substr[SubstrPos] <> Str[StrPos] then
+    if Substr[SubstrPos] <> Str[StartPos] then
     begin
-      Dec(StrPos, SubstrPos - 1);
+      Dec(StartPos, SubstrPos - 1);
       SubstrPos := 1;
     end
       else
         if SubstrPos >= Length(Substr) then
         begin
-          Result := StrPos - SubstrPos + 1;
+          Result := StartPos - SubstrPos + 1;
           Exit;
         end
         else
           Inc(SubstrPos);
 
-    Inc(StrPos);
+    Inc(StartPos);
   end;
 end;
 
