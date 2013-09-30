@@ -91,10 +91,10 @@ ImageBase=4194304
 ExeDescription=
 [Directories]
 OutputDir=
-UnitOutputDir=
+UnitOutputDir=..\..
 PackageDLLOutputDir=
 PackageDCPOutputDir=
-SearchPath=..\..\Functions;..\..\Classes
+SearchPath=..\..\Units
 Packages=vcl;rtl;indy;vclx;visualclx;vclactnband;VclSmp;vclshlctrls;Package1;IndyCore70;IndySystem70;IndyProtocols70;vclie;ATViewerD7
 Conditionals=
 DebugSourceDirs=
@@ -130,16 +130,16 @@ OriginalFilename=
 ProductName=
 ProductVersion=1.0.0.0
 Comments=
-[Excluded Packages]
-c:\program files\borland\delphi7\Projects\Bpl\dclusr70.bpl=Borland User Components
-c:\program files\borland\delphi7\Bin\dcl31w70.bpl=Delphi 1.0 Compatibility Components
-C:\WINDOWS\system32\ibevnt70.bpl=Borland Interbase Event Alerter Component
 [HistoryLists\hlUnitAliases]
 Count=1
 Item0=WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;
 [HistoryLists\hlSearchPath]
-Count=4
-Item0=..\..\Functions;..\..\Classes
-Item1=$(DELPHI)\Lib\Debug;..\..\Functions;..\..\Classes
-Item2=..\..\Functions
-Item3=C:\Program Files\Borland\Delphi7\Projects\ewd
+Count=5
+Item0=..\..\Units
+Item1=..\..\Functions;..\..\Classes
+Item2=$(DELPHI)\Lib\Debug;..\..\Functions;..\..\Classes
+Item3=..\..\Functions
+Item4=C:\Program Files\Borland\Delphi7\Projects\ewd
+[HistoryLists\hlUnitOutputDirectory]
+Count=1
+Item0=..\..
