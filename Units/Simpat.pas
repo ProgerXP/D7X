@@ -242,7 +242,7 @@ end;
 
 function TSimpatRepeatOneOrNone.IsRepeated(RepeatCount: Integer): Boolean;
 begin
-  Result := (RepeatCount = 0) or (RepeatCount = 1);
+  Result := RepeatCount = 0;
 end;
 
 function TSimpatRepeatOneOrNone.IsRepeatOptional(RepeatCount: Integer): Boolean;
@@ -384,7 +384,7 @@ var
 begin
   Result := True;
   Pos := Input.Position;
-
+                              
   for I := 0 to FPieces.Count - 1 do
     if (FPieces[I] = nil) or (FPieces[I] as TLinearSimpat).MatchAgainst(Input) then
       Exit
@@ -421,7 +421,7 @@ procedure TSimpatRangeBytes.FillRange(AStart, AEnd: Byte; State: Boolean);
 begin
   if AEnd > AStart then
   begin
-    FillChar(FBytes[AStart], AEnd - AStart, State);
+    FillChar(FBytes[AStart], AEnd - AStart + 1, State);
     if not State then FMatchesAll := False;
   end;
 end;
@@ -828,7 +828,7 @@ begin
   FParsed.Clear;
   PrevWasItem := False;
   I := 1;
-
+             
   while I <= Length(Pattern) do
   begin
     if I < Length(Pattern) then
@@ -905,12 +905,11 @@ begin
           if (FParsed[I + 1] as TSimpatItem).MatchAgainst(FContext) then
             Inc(Repeats)
           else if IsRepeatOptional(Repeats) then
-          begin
-            Inc(I);
-            Break;
-          end
+            Break
           else
             Exit;
+
+        Inc(I);
       end
     else if not Item.MatchAgainst(FContext) then
       Exit;

@@ -62,6 +62,8 @@ begin
   Mismatches('EOF', SimpatDefaultEOLN);
   Matches('EOLN', SimpatDefaultEOLN);
   Matches('EOF', '');
+  Matches('[DIG.^]+ EOF', '999^');
+  Matches('DIG DIG? DIG?', '9z9');
 
   Matches('a||b', 'a|b');
   Matches('a|| b', 'a|b');

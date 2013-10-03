@@ -1116,7 +1116,7 @@ begin
   Result := 0;
   if Substr = '' then
     Exit;
-                 
+
   if EndPos > Length(Str) then
     EndPos := Length(Str);
   if StartPos < 1 then

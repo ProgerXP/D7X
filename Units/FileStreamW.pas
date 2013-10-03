@@ -141,6 +141,8 @@ end;
 { TFileStreamW }
 
 constructor TFileStreamW.Create(const FileName: WideString; Mode: Word);
+var
+  Error: DWord;
 begin
   FFileName := FileName;
 
@@ -148,13 +150,19 @@ begin
   begin
     inherited Create(FileCreateW(FileName, fmOpenReadWrite or fmShareExclusive));
     if FHandle < 0 then
-      raise EFCreateError.CreateFmt('TFileStreamW: Cannot create file "%s". %s', [ExpandFileName(FileName), SysErrorMessage(GetLastError)])
+    begin
+      Error := GetLastError;
+      raise EFCreateError.CreateFmt('TFileStreamW: Cannot create file "%s". %s', [ExpandFileName(FileName), SysErrorMessage(Error)])
+    end;
   end
     else
     begin
       inherited Create(FileOpenW(FileName, Mode));
       if FHandle < 0 then
-        raise EFOpenError.CreateFmt('TFileStreamW: Cannot open file "%s". %s', [ExpandFileName(FileName), SysErrorMessage(GetLastError)])
+      begin
+        Error := GetLastError;
+        raise EFOpenError.CreateFmt('TFileStreamW: Cannot open file "%s". %s', [ExpandFileName(FileName), SysErrorMessage(Error)])
+      end;
     end
 end;
 
