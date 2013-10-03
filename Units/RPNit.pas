@@ -158,8 +158,8 @@ type
 
   TRpnValueStack = class
   protected
-    FValues: array[0..8191] of TRpnScalar;   // 136 KiB.
     FCount: Integer;
+    FValues: array[0..8191] of TRpnScalar;   // 136 KiB.
   public
     constructor Create;
 
@@ -512,7 +512,7 @@ begin
       Result := TRpnOperatorClass( GetClass(Name) );
 
   if not Result.InheritsFrom(TRpnOperator) then
-    raise EInvalidArgument.CreateFmt(Error, [Result, TRpnOperator]);
+    raise EInvalidPointer.CreateFmt(Error, [Result, TRpnOperator]);
 end;
 
 procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
@@ -529,7 +529,7 @@ function DefaultRpnVarClass(New: TRpnVariableClass = NIL): TRpnVariableClass;
 begin
   if New <> NIL then
     if not New.InheritsFrom(TRpnVariable) then
-      raise EInvalidArgument.CreateFmt('RPN variable class must inherit from %s.', [TRpnVariable])
+      raise EInvalidPointer.CreateFmt('RPN variable class must inherit from %s.', [TRpnVariable])
       else
         DefaultRpnSettings.VariableClass := New;
 
