@@ -109,19 +109,19 @@ begin
   Assert(Key   = '', 'Split');
   Assert(Value = 'value', 'Split');
 
-  Split('\=value', '=', Key, Value);
-  Assert(Key   = '', 'Split');
-  Assert(Value = '\=value', 'Split');
+  Split('\=value', '=', Key, Value, '\');
+  Assert(Key   = '=value', 'Split');
+  Assert(Value = '', 'Split');
 
-  Split('\=val=ue', '=', Key, Value);
-  Assert(Key   = '\=val', 'Split');
+  Split('\=val=ue', '=', Key, Value, '\');
+  Assert(Key   = '=val', 'Split');
   Assert(Value = 'ue', 'Split');
 
   Split('=val=ue', '=', Key, Value);
   Assert(Key   = '', 'Split');
   Assert(Value = 'val=ue', 'Split');
 
-  Split('key \= val=ue', '=', Key, Value, True);
+  Split('key \= val=ue', '=', Key, Value);
   Assert(Key   = 'key \', 'Split');
   Assert(Value = ' val=ue', 'Split');
 end;
@@ -417,11 +417,11 @@ begin
   Assert(FormatInterval(20 * 24 * 3600000) = '2,86w', 'FormatInterval');
   Assert(FormatInterval($FFFFFFFF) = '7,10w', 'FormatInterval');
 
-  Assert(FormatSize(0) = '0 bytes', 'FormatSize');
-  Assert(FormatSize(1) = '1 bytes', 'FormatSize');
-  Assert(FormatSize(800) = '800 bytes', 'FormatSize');
+  Assert(FormatSize(0) = '0 B', 'FormatSize');
+  Assert(FormatSize(1) = '1 B', 'FormatSize');
+  Assert(FormatSize(800) = '800 B', 'FormatSize');
 
-  Assert(FormatSize(1023) = '1023 bytes', 'FormatSize');
+  Assert(FormatSize(1023) = '1023 B', 'FormatSize');
   Assert(FormatSize(1024) = '1,00 Kb', 'FormatSize');
   Assert(FormatSize(1025) = '1,00 Kb', 'FormatSize');        
   Assert(FormatSize(8000) = '7,81 Kb', 'FormatSize');
