@@ -2,7 +2,7 @@ unit StringUtils;
 
 interface
 
-uses SysUtils, Windows;
+uses SysUtils, Windows, Classes;
 
 type
   TStringArray = array of String;
@@ -52,6 +52,7 @@ function TryStrToFloatStrict(const S: String; out Value: Single;
 function TryStrToFloatStrict(const S: String; out Value: Double;
   const FormatSettings: TFormatSettings): Boolean; overload;
 function DetectEolnStyleIn(const Str: WideString): WideString;
+function DetectEolnStyleInANSI(Stream: TStream): WideString;
 
 // not more than 65536 resulting pieces are supported.
 function ExplodeUnquoting(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;
@@ -226,7 +227,7 @@ begin
   LfPos := PosW(LF, Str, 2);
 
   if LfPos = 0 then
-    if PosW(CR, Str, 2) = 0 then
+    if PosW(CR, Str) = 0 then
       Result := LF
       else
         Result := CR
@@ -234,6 +235,17 @@ begin
       Result := CR + LF
       else
         Result := LF;
+end;                     
+
+function DetectEolnStyleInANSI(Stream: TStream): WideString;
+var
+  Buf: array[0..2047] of Char;
+var
+  Len: Integer;
+begin
+  Len := Stream.Read(Buf[0], Length(Buf));
+  Stream.Seek(-Len, soFromCurrent);
+  Result := DetectEolnStyleIn( String(Copy(Buf, 1, Len)) );
 end;
 
 function ExplodeUnquoting(Delimiter, Str: WideString; Count: Integer = 0; SkipEmpty: Boolean = False): TWideStringArray;

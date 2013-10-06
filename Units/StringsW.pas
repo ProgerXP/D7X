@@ -251,6 +251,8 @@ type
 
     function GetObjectByStr(Str: WideString): TObject;
     procedure SetObjectByStr(Str: WideString; Value: TObject);
+    function GetObjectByName(Name: WideString): TObject;
+    procedure SetObjectByName(Name: WideString; Value: TObject);
   public
     constructor Create; overload; override;
     constructor Create(OwnsObjects: Boolean); reintroduce; overload;
@@ -261,6 +263,7 @@ type
 
     property OwnsObjects: Boolean read FOwnsObjects write FOwnsObjects;
     property ObjectByStr[Name: WideString]: TObject read GetObjectByStr write SetObjectByStr; default;
+    property ObjectByName[Name: WideString]: TObject read GetObjectByName write SetObjectByName;
   end;
 
   TComponentHash = class (TObjectHash)
@@ -1030,7 +1033,7 @@ begin
   Result := '';
   for I := 0 to Count - 1 do
     Result := Result + Names[I] + Delim;
-  Result := Copy(Result, 1, Length(Result) - Length(Delim));
+  System.Delete(Result, Length(Result) - Length(Delim) + 1, MaxInt);
 end;
 
 function TStringsW.JoinValues(const Delim: WideString): WideString;
@@ -1040,7 +1043,7 @@ begin
   Result := '';
   for I := 0 to Count - 1 do
     Result := Result + ValueFromIndex[I] + Delim;
-  Result := Copy(Result, 1, Length(Result) - Length(Delim));
+  System.Delete(Result, Length(Result) - Length(Delim) + 1, MaxInt);
 end;
 
 function TStringsW.Join(const Delim: WideString): WideString;
@@ -1597,6 +1600,28 @@ begin
   I := IndexOf(Str);
   if I = -1 then
     AddObject(Str, Value)
+    else
+      Objects[I] := Value;
+end;
+
+function TObjectHash.GetObjectByName(Name: WideString): TObject;
+var
+  I: Integer;
+begin
+  I := IndexOfName(name);
+  if I = -1 then
+    Result := NIL
+    else
+      Result := Objects[I];
+end;
+
+procedure TObjectHash.SetObjectByName(Name: WideString; Value: TObject);
+var
+  I: Integer;
+begin
+  I := IndexOfName(Name);
+  if I = -1 then
+    AddObject(Name + NameValueSeparator, Value)
     else
       Objects[I] := Value;
 end;

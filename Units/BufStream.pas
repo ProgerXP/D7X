@@ -21,7 +21,7 @@ type
     procedure DoneReading;
     function FillBuffer(Pos, Size: Int64): Integer;
   public
-    constructor Create(Stream: TStream);
+    constructor Create(Stream: TStream; Own: Boolean = True);
     destructor Destroy; override;
 
     procedure Rebind(Value: TStream);
@@ -59,10 +59,10 @@ type
 
 { TBufStream }
 
-constructor TBufStream.Create(Stream: TStream);
+constructor TBufStream.Create(Stream: TStream; Own: Boolean);
 begin
   FStream := Stream;
-  FOwnsStream := True;
+  FOwnsStream := Own;
   FBuffers := TObjectList.Create;
   Resize(8, 65536);   // 8 x 64K
 end;
