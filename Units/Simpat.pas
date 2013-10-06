@@ -98,7 +98,7 @@ type
     // Owned. Name is converted to upper case.
     procedure AddCharClass(Name: SimpatString; Bytes: TSimpatRangeBytes);
     procedure AddDefaultCharClasses;
-    function MatchAgainst(Input: TStream): Boolean;
+    function MatchAgainst(Input: TStream; ContextSync: TSimpatPattern = nil): Boolean;
     function Debug: SimpatString;
   end;
 
@@ -108,25 +108,24 @@ type
     function DoMatch(const Context: TSimpatContext; Input: TStream): Boolean; virtual; abstract;
   public
     function MatchAgainst(const Context: TSimpatContext): Boolean;
+    function EndsRepeat(const Context: TSimpatContext; RepeatCount: Integer): Boolean; virtual;
   end;
 
     TSimpatRepeat = class (TSimpatItem)
     protected
       function DoMatch(const Context: TSimpatContext; Input: TStream): Boolean; override;
     public
-      function IsRepeated(RepeatCount: Integer): Boolean; virtual; abstract;
+      function IsRepeated(RepeatCount: Integer): Boolean; virtual;
       function IsRepeatOptional(RepeatCount: Integer): Boolean; virtual; abstract;
     end;
 
       TSimpatRepeatAny = class (TSimpatRepeat)
       public
-        function IsRepeated(RepeatCount: Integer): Boolean; override;
         function IsRepeatOptional(RepeatCount: Integer): Boolean; override;
       end;
 
       TSimpatRepeatOneOrMore = class (TSimpatRepeat)
       public
-        function IsRepeated(RepeatCount: Integer): Boolean; override;
         function IsRepeatOptional(RepeatCount: Integer): Boolean; override;
       end;
 
@@ -150,7 +149,8 @@ type
       function DoMatch(const Context: TSimpatContext; Input: TStream): Boolean; override;
     public
       constructor Create(Bytes: TSimpatRangeBytes);
-      destructor Destroy; override;
+      destructor Destroy; override;       
+      function EndsRepeat(const Context: TSimpatContext; RepeatCount: Integer): Boolean; override;
     end;
 
   TSimpat = TSimpatPattern;
@@ -215,22 +215,22 @@ begin
   end;
 end;
 
+function TSimpatItem.EndsRepeat(const Context: TSimpatContext; RepeatCount: Integer): Boolean;
+begin
+  Result := False;
+end;
+
 function TSimpatRepeat.DoMatch(const Context: TSimpatContext; Input: TStream): Boolean;
 begin
   Result := False;
 end;
 
-function TSimpatRepeatAny.IsRepeated(RepeatCount: Integer): Boolean;
+function TSimpatRepeat.IsRepeated(RepeatCount: Integer): Boolean;
 begin
   Result := True;
 end;
 
 function TSimpatRepeatAny.IsRepeatOptional(RepeatCount: Integer): Boolean;
-begin
-  Result := True;
-end;
-
-function TSimpatRepeatOneOrMore.IsRepeated(RepeatCount: Integer): Boolean;
 begin
   Result := True;
 end;
@@ -293,6 +293,11 @@ begin
     // Not inverting MatchesEOF - it has special meaning so if inverted [^bar]* will run forever.
     Result := FBytes.IsInverted xor Result;
   end;
+end;
+
+function TSimpatRange.EndsRepeat(const Context: TSimpatContext; RepeatCount: Integer): Boolean;
+begin
+  Result := FBytes.MatchesEOF and (Context.Input.Position >= Context.Input.Size);
 end;
 
 { TSimpatPattern }
@@ -384,9 +389,9 @@ var
 begin
   Result := True;
   Pos := Input.Position;
-                              
+
   for I := 0 to FPieces.Count - 1 do
-    if (FPieces[I] = nil) or (FPieces[I] as TLinearSimpat).MatchAgainst(Input) then
+    if (FPieces[I] = nil) or (FPieces[I] as TLinearSimpat).MatchAgainst(Input, Self) then
       Exit
     else
       Input.Position := Pos;
@@ -883,7 +888,7 @@ begin
       Inc(I);
 end;
 
-function TLinearSimpat.MatchAgainst(Input: TStream): Boolean;
+function TLinearSimpat.MatchAgainst(Input: TStream; ContextSync: TSimpatPattern = nil): Boolean;
 var
   I, Repeats: Integer;
   Item: TSimpatItem;
@@ -891,6 +896,9 @@ begin
   Result := False;
   I := 0;
   FContext.Input := Input;
+
+  if ContextSync <> nil then
+    FContext.EOLN := ContextSync.Context.EOLN;
 
   while I < FParsed.Count do
   begin
@@ -903,16 +911,21 @@ begin
 
         while IsRepeated(Repeats) do
           if (FParsed[I + 1] as TSimpatItem).MatchAgainst(FContext) then
-            Inc(Repeats)
+            if not (FParsed[I + 1] as TSimpatItem).EndsRepeat(FContext, Repeats) then
+              Inc(Repeats)
+            else if IsRepeatOptional(Repeats + 1) then
+              Break   // match
+            else
+              Exit    // mismatch
           else if IsRepeatOptional(Repeats) then
-            Break
+            Break     // match
           else
-            Exit;
+            Exit;     // mismatch
 
         Inc(I);
       end
     else if not Item.MatchAgainst(FContext) then
-      Exit;
+      Exit;           // mismatch
 
     Inc(I);
   end;
