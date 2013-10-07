@@ -58,6 +58,7 @@ type
   TCCWriting = record
     Original: WideString;
     Coord: TCoord;
+    MaxCoord: TCoord;
     LastPartIndex: Integer;
     PostWriters: TCCPostWriters;
     Options: TCCWritingOptions;
@@ -600,6 +601,13 @@ begin
 
     Start := Coord;
     AdvanceCoord(Coord, Str);
+
+    if Coord.Y >= MaxCoord.Y then
+    begin
+      Dec(Start.Y, Coord.Y - MaxCoord.Y);
+      Coord.Y := MaxCoord.Y - 1;
+    end;
+
     PostWriters.Call(TCCWriting(Context), Start);
   end;
 end;
@@ -1020,7 +1028,10 @@ var
   Info: TConsoleScreenBufferInfo;
 begin
   if GetConsoleScreenBufferInfo(Context.Options.Handle, Info) then
+  begin
     Context.Coord := Info.dwCursorPosition;
+    Context.MaxCoord := Info.dwSize;
+  end;
 end;
 
 { TCCGroupPart }
