@@ -41,6 +41,17 @@ type
     end;
   end;
 
+  THexDumpOptions = record
+    PerLine: Integer;       // bytes, 16 by default
+    ControlChar: Char;      // '.'
+    Cutter: String;         // '-- HERE --'
+    BufOffset: Int64;       // 0
+    EmptyCells: Integer;    // 0
+    ColorConsole: Boolean;  // False
+    EOLN: String;           // CR/LF
+    NoLnOn80: Boolean;      // False
+  end;
+
 // todo: make Lower/UpperCase wrapper for Wide*Case.
 // todo: reconvertion table for Lower/UpperCase?
 // todo: use StringTypeW in RemoveNonWordChars?
@@ -159,6 +170,13 @@ function LowerCaseFirst(const Str: WideString): WideString;
 
 function StripAccelChars(const Str: WideString): WideString;
 
+function HexDump(const Buf; BufSize: Integer; const BufOffset: Int64; EmptyCells: Integer = 0): String; overload;
+function HexDumpCC(const Buf; BufSize: Integer; const BufOffset: Int64; EmptyCells: Integer = 0): String; overload;
+function HexDumpCC(const Buf; BufSize: Integer; Opt: THexDumpOptions): String; overload;
+function HexDump(const Buf; BufSize: Integer; Opt: THexDumpOptions): String; overload;
+function HexDumpCutCC(const Buf; BufSize: Integer; const BufOffset, CutOffset: Int64): String;
+function HexDumpCut(const Buf; BufSize: Integer; const CutOffset: Int64; Opt: THexDumpOptions): String;
+
 const
   // for WrapText and PadText.
   LineBreakers:   WideString  = '.,!?";:'#10#13#9 +
@@ -174,11 +192,12 @@ type
   end;
 
 var
+  DefaultHexDumpOptions: THexDumpOptions;
   StringUtilsLanguage: TStringUtilsLanguage;
 
 implementation
 
-uses StrUtils, Math, ConvUtils;
+uses StrUtils, Math, ConvUtils, ColorConsole;
 
 const
   cHotkeyPrefix = '&'; // it's defined in Menus.pas but we don't require the whole unit because of it.
@@ -1343,13 +1362,160 @@ begin
       Delete(Result, I, 1)
 end;
 
+procedure CCDump(var Opt: THexDumpOptions);
+begin
+  Opt.ColorConsole := True;
+  Opt.EOLN := '{NL}';
+  Opt.NoLnOn80 := True;
+end;
+
+function HexDump(const Buf; BufSize: Integer; const BufOffset: Int64; EmptyCells: Integer = 0): String;
+var
+  Opt: THexDumpOptions;
+begin
+  Opt := DefaultHexDumpOptions;
+  Opt.BufOffset := BufOffset;
+  Opt.EmptyCells := EmptyCells;
+  Result := HexDump(Buf, BufSize, Opt);
+end;
+
+function HexDumpCC(const Buf; BufSize: Integer; const BufOffset: Int64; EmptyCells: Integer = 0): String;
+var
+  Opt: THexDumpOptions;
+begin
+  Opt := DefaultHexDumpOptions;
+  Opt.BufOffset := BufOffset;
+  Opt.EmptyCells := EmptyCells;
+  Result := HexDumpCC(Buf, BufSize, Opt);
+end;
+
+function HexDumpCC(const Buf; BufSize: Integer; Opt: THexDumpOptions): String;
+begin
+  CCDump(Opt);
+  Result := HexDump(Buf, BufSize, Opt);
+end;
+
+function HexDump(const Buf; BufSize: Integer; Opt: THexDumpOptions): String;
+var
+  Start, I: Integer;
+  Hexes, Chars, Hex, Ch: String;
+  Ptr: PByte;
+begin
+  Result := '';
+  Start := 0;
+  Opt.EmptyCells := Opt.EmptyCells mod Opt.PerLine;
+  Ptr := @Buf;
+
+  while Start < BufSize do
+  begin
+    Hexes := '';
+    Chars := '';
+
+    for I := 0 to Opt.PerLine - 1 do
+    begin
+      if (Opt.EmptyCells > 0) or (I + Start >= BufSize) then
+      begin
+        Ch := ' ';
+        Hex := '  ';
+        Dec(Opt.EmptyCells);
+      end
+      else
+      begin
+        Ch := Char(Ptr^);
+        Ptr := PByte(Integer(Ptr) + 1);
+        Hex := IntToHex(Byte(Ch[1]), 2);
+      end;
+      
+      if Opt.ColorConsole then
+        if Ch[1] in [#9, #10, #13] then
+        begin
+          case Ch[1] of
+          #9:   Ch := 't';
+          #10:  Ch := 'n';
+          #13:  Ch := 'r';
+          end;
+
+          Hex := '{@wi ' + Hex + '}';
+          Ch := '{@wi ' + Ch + '}';
+        end
+        else if Ch[1] < ' ' then
+          Ch := '{i ' + Opt.ControlChar + '}'
+        else if Ch[1] in [#33..#128] then
+        begin
+          Hex := '{wi ' + Hex + '}';
+          Ch := '{wi ' + CCQuote(Ch, CCParsing) + '}';
+        end
+        else
+          Ch := CCQuote(Ch, CCParsing)
+      else if Ch[1] < ' ' then
+        Ch := Opt.ControlChar;
+
+      if (I > 0) and (I mod 8 = 0) and (I < Opt.PerLine - 1) then
+        Hexes := Hexes + ' ';
+      Hexes := Hexes + Hex + ' ';
+      Chars := Chars + Ch;
+    end;
+
+    if (Result <> '') and (not Opt.NoLnOn80 or (Opt.PerLine mod 16 <> 0)) then
+      Result := Result + Opt.EOLN;
+    Result := Result + Format('{@wi %.8X}    %s   %s', [Opt.BufOffset + Start, Hexes, Chars]);
+    Inc(Start, Opt.PerLine);
+  end;
+end;
+                
+function HexDumpCutCC(const Buf; BufSize: Integer; const BufOffset, CutOffset: Int64): String;
+var
+  Opt: THexDumpOptions;
+begin
+  Opt := DefaultHexDumpOptions;
+  Opt.BufOffset := BufOffset;
+  CCDump(Opt);
+  Result := HexDumpCut(Buf, BufSize, CutOffset, Opt);
+end;
+
+function HexDumpCut(const Buf; BufSize: Integer; const CutOffset: Int64; Opt: THexDumpOptions): String;
+var
+  HeadSize: Integer;
+begin
+  if (CutOffset < Opt.BufOffset) or (CutOffset >= Opt.BufOffset + BufSize) then
+    Result := HexDump(Buf, BufSize, Opt)
+  else
+  begin
+    HeadSize := CutOffset - Opt.BufOffset;
+    Result := HexDump(Buf, HeadSize, Opt);
+
+    if (Result <> '') and (not Opt.NoLnOn80 or (Opt.PerLine mod 16 <> 0)) then
+      Result := Result + Opt.EOLN;
+
+    if Opt.ColorConsole then                                              
+      Result := Result + '{<{mi ' + CCQuote(Opt.Cutter, CCParsing) + '}}'
+    else
+      Result := Result + CCQuote(Opt.Cutter, CCParsing);
+
+    if HeadSize < BufSize then
+    begin
+      Opt.EmptyCells := HeadSize;
+      Result := Result + Opt.EOLN + HexDump(Pointer( Integer(@Buf) + HeadSize )^, BufSize - HeadSize, Opt);
+    end;
+  end;
+end;
+
 function GetDefaultThousandsSeparator: WideString;
 begin
   SetLength(Result, 10);
   SetLength(Result, GetLocaleInfoW(GetUserDefaultLCID, LOCALE_STHOUSAND, PWideChar(Result), 10));
 end;
 
-initialization
+initialization                
+  FillChar(DefaultHexDumpOptions, SizeOf(DefaultHexDumpOptions), 0);
+  with DefaultHexDumpOptions do
+  begin
+    PerLine := 16;
+    ControlChar := '.';
+    Cutter := '-- HERE --';
+    EOLN := #13#10;
+  end;
+
   with StringUtilsLanguage do
   begin
     VersionFormat       := 'v%d.%d';
