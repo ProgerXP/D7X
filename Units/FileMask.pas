@@ -65,6 +65,8 @@ type
     function PutNextTo(out NextFile: WideString): Boolean;
   end;
 
+  TFileMask = TMaskResolver;
+
 implementation
 
 { TFMStack }

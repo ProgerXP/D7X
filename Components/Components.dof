@@ -91,13 +91,13 @@ ImageBase=4194304
 ExeDescription=D7X Components
 [Directories]
 OutputDir=
-UnitOutputDir=
+UnitOutputDir=..
 PackageDLLOutputDir=
 PackageDCPOutputDir=
-SearchPath=..\Classes;..\Functions
+SearchPath=..\Units;..\..\PNGImage
 Packages=vcl;rtl;indy;dsnapcon;dsnap;dbrtl;vcldb;vclx;adortl;bdertl;vcldbx;ibxpress;teeui;teedb;tee;dss;visualclx;visualdbclx;vclactnband;VclSmp;vclshlctrls;Package1;IndyCore70;IndySystem70;IndyProtocols70;vclie;ATViewerD7
 Conditionals=
-DebugSourceDirs=
+DebugSourceDirs=..\Units;..\..\PNGImage
 UsePackages=0
 [Parameters]
 RunParams=
@@ -121,31 +121,34 @@ Locale=1049
 CodePage=1251
 [Version Info Keys]
 CompanyName=
-FileDescription=Components package from the D7X library for Delphi 7.
+FileDescription=
 FileVersion=1.0.0.0
-InternalName=D7X - Components
-LegalCopyright=Proger_XP
+InternalName=
+LegalCopyright=
 LegalTrademarks=
-OriginalFilename=Components/Components.dpk
+OriginalFilename=
 ProductName=
 ProductVersion=1.0.0.0
 Comments=
-[Excluded Packages]
-c:\program files\borland\delphi7\Projects\Bpl\MiscComponents.bpl=Miscellaneous components for ArcTool and Hex Novel
-c:\program files\borland\delphi7\Projects\Bpl\Package.bpl=Components for Archie // by Proger_XP, proger at i-forge.net
-c:\program files\borland\delphi7\Projects\Bpl\dclusr70.bpl=Borland User Components
-c:\program files\borland\delphi7\Bin\dcl31w70.bpl=Delphi 1.0 Compatibility Components
-c:\program files\borland\delphi7\Projects\Bpl\HeavyComponents.bpl=Heavy components for ArcTool and Hex Novel
-c:\program files\borland\delphi7\Projects\Bpl\PluginComponents.bpl=Plugin components for ArcTool and Hex Novel
-C:\WINDOWS\system32\ibevnt70.bpl=Borland Interbase Event Alerter Component
+[HistoryLists\hlDebugSourcePath]
+Count=3
+Item0=..\Units;..\..\PNGImage
+Item1=..\Units
+Item2=..\Units;..\..\PNGImage;..
 [HistoryLists\hlUnitAliases]
 Count=1
 Item0=WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;
 [HistoryLists\hlSearchPath]
-Count=3
-Item0=..\Classes;..\Functions
-Item1=..\Classes
-Item2=..\..\LIbrary;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions
+Count=6
+Item0=..\Units;..\..\PNGImage
+Item1=..\Units
+Item2=..\Units;..\..\PNGImage;..
+Item3=..\Classes;..\Functions
+Item4=..\Classes
+Item5=..\..\LIbrary;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions
+[HistoryLists\hlUnitOutputDirectory]
+Count=1
+Item0=..
 [HistoryLists\hlOutputDirectorry]
 Count=1
 Item0=..

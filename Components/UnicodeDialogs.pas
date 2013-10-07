@@ -62,6 +62,11 @@ uses Messages, Forms;
 
 var
   MAX_PATH: Word = 65000;
+           
+procedure Register;
+begin
+  RegisterComponents('D7X', [TOpenDialogW, TSaveDialogW]);
+end;
 
 // Dialogs.pas: 448
 procedure CenterWindow(Wnd: HWnd);
@@ -254,16 +259,9 @@ begin
   Result := DoExecute(@GetOpenFileNameW)
 end;
 
-
 function TSaveDialogW.Execute;
 begin
   Result := DoExecute(@GetSaveFileNameW)
-end;
-
-
-procedure Register;
-begin
-  RegisterComponents('D7X', [TOpenDialogW, TSaveDialogW]);
 end;
 
 end.

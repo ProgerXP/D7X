@@ -154,8 +154,8 @@ implementation
 uses StringUtils, Utils, FileStreamW;
 
 type
-  RegVisHack = class (TRegistry)
-  end;
+  TOpenRegistry = class (TRegistry);
+  TOpenHash = class (THash);
 
 const
   KeyValueSepar       = '=';
@@ -698,12 +698,12 @@ begin
   begin
     FSections.CaseSensitive := Value;
     for I := 0 to FSections.Count - 1 do
-      with THash(FSections.Objects[I]) do
+      with TOpenHash(FSections.Objects[I]) do
       begin
         CaseSensitive := Value;
         Changed;
       end;
-    THash(FSections).Changed;
+    TOpenHash(FSections).Changed;
   end;
 end;
 
@@ -966,7 +966,7 @@ function TRegistryIniFileW.ReadDate(const Section, Name: WideString; Default: TD
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     Key := GetKey(Section);
     if Key <> 0 then
@@ -990,7 +990,7 @@ function TRegistryIniFileW.ReadDateTime(const Section, Name: WideString; Default
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     Key := GetKey(Section);
     if Key <> 0 then
@@ -1014,7 +1014,7 @@ function TRegistryIniFileW.ReadFloat(const Section, Name: WideString; Default: D
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     Key := GetKey(Section);
     if Key <> 0 then
@@ -1038,7 +1038,7 @@ function TRegistryIniFileW.ReadInteger(const Section, Ident: WideString; Default
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     Key := GetKey(Section);
     if Key <> 0 then
@@ -1065,7 +1065,7 @@ function TRegistryIniFileW.ReadTime(const Section, Name: WideString; Default: TD
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     Key := GetKey(Section);
     if Key <> 0 then
@@ -1095,11 +1095,11 @@ begin
   Result := 0;
   with RegIniFile do
   begin
-    Key := RegVisHack(FRegIniFile).GetKey(Section);
+    Key := TOpenRegistry(FRegIniFile).GetKey(Section);
     if Key <> 0 then
     try
       OldKey := CurrentKey;
-      RegVisHack(FRegIniFile).SetCurrentKey(Key);
+      TOpenRegistry(FRegIniFile).SetCurrentKey(Key);
       try
         if ValueExists(Name) then
         begin
@@ -1124,7 +1124,7 @@ begin
           end;
         end;
       finally
-        RegVisHack(FRegIniFile).SetCurrentKey(OldKey);
+        TOpenRegistry(FRegIniFile).SetCurrentKey(OldKey);
       end;
     finally
       RegCloseKey(Key);
@@ -1136,7 +1136,7 @@ procedure TRegistryIniFileW.WriteDate(const Section, Name: WideString; Value: TD
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     CreateKey(Section);
     Key := GetKey(Section);
@@ -1159,7 +1159,7 @@ procedure TRegistryIniFileW.WriteDateTime(const Section, Name: WideString; Value
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     CreateKey(Section);
     Key := GetKey(Section);
@@ -1182,7 +1182,7 @@ procedure TRegistryIniFileW.WriteFloat(const Section, Name: WideString; Value: D
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     CreateKey(Section);
     Key := GetKey(Section);
@@ -1205,7 +1205,7 @@ procedure TRegistryIniFileW.WriteInteger(const Section, Ident: WideString; Value
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     CreateKey(Section);
     Key := GetKey(Section);
@@ -1230,7 +1230,7 @@ procedure TRegistryIniFileW.WriteTime(const Section, Name: WideString; Value: TD
 var
   Key, OldKey: HKEY;
 begin
-  with RegVisHack(FRegIniFile) do
+  with TOpenRegistry(FRegIniFile) do
   begin
     CreateKey(Section);
     Key := GetKey(Section);
@@ -1258,7 +1258,7 @@ begin
   with RegIniFile do
   begin
     CreateKey(Section);
-    Key := RegVisHack(FRegIniFile).GetKey(Section);
+    Key := TOpenRegistry(FRegIniFile).GetKey(Section);
     if Key <> 0 then
     try
       OldKey := CurrentKey;
@@ -1271,12 +1271,12 @@ begin
           Stream.CopyFrom(Value, Value.Size - Value.Position);
           Stream.Position := 0;
         end;
-        RegVisHack(FRegIniFile).SetCurrentKey(Key);
+        TOpenRegistry(FRegIniFile).SetCurrentKey(Key);
         try
           WriteBinaryData(Name, Pointer(Integer(Stream.Memory) + Stream.Position)^,
             Stream.Size - Stream.Position);
         finally
-          RegVisHack(FRegIniFile).SetCurrentKey(OldKey);
+          TOpenRegistry(FRegIniFile).SetCurrentKey(OldKey);
         end;
       finally
         if Value <> Stream then Stream.Free;

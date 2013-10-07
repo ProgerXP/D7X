@@ -26,6 +26,11 @@ procedure Register;
 implementation
 
 uses Windows, Forms;
+                    
+procedure Register;
+begin
+  RegisterComponents('D7X', [TMenuSpeedButton]);
+end;
 
 constructor TMenuSpeedButton.Create;
 begin               
@@ -58,11 +63,6 @@ begin
         end
     end
   end
-end;
-
-procedure Register;
-begin
-  RegisterComponents('D7X', [TMenuSpeedButton]);
 end;
 
 end.

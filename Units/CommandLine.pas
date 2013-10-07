@@ -173,6 +173,7 @@ type
     procedure EnsureConsoleAtNewLine;
     function OnCtrlEvent(Event: DWord): Boolean; virtual;
 
+    function GetTaskArgument: WideString; virtual;
     function TryDoingTask(Task: WideString): Boolean; virtual;    // Task is not an alias
     function DoStandardTask(Task: WideString): Boolean;           // Task is not an alias
     procedure BeforeExit; virtual;
@@ -1043,7 +1044,7 @@ begin
   ConsoleWriteLn(Help);
 
   if Detailed then
-    ConsoleWriteLn(F_EOLN + F_EOLN + HelpDetails);
+    ConsoleWriteLn(F_EOLN + HelpDetails);
 end;
 
 procedure TCLApplication.ErrorWriteLn(const Str: WideString);
@@ -1191,7 +1192,7 @@ begin
     FCLParser.ParseCL( GetCLString );
     AcquireOptions;
 
-    Task := FCLParser.Arguments[0];
+    Task := GetTaskArgument;
 
     if IsNakedTask(Task) then
       FWaitOnExit := clNeverWait
@@ -1210,6 +1211,11 @@ begin
   BeforeExit;
 end;
 
+function TCLApplication.GetTaskArgument: WideString;
+begin
+  Result := FCLParser.Arguments[0];    
+end;
+
 procedure TCLApplication.HandleException(E: Exception);
 var
   Msg: WideString;
@@ -1217,7 +1223,7 @@ begin
   Msg := '';
 
   if RanOK then
-    RanOK := False;
+    RanOK := False;   // resets ExitCode so only calling if it's still 0 (success).
 
   if E is ECLUnknownTask then
   begin
