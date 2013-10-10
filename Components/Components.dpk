@@ -33,6 +33,7 @@ contains
   UnicodeDialogs in 'UnicodeDialogs.pas',
   PNGSpeedButton in 'PNGSpeedButton.pas',
   MenuSpeedButton in 'MenuSpeedButton.pas',
-  pngimage in '..\PNGImage\pngimage.pas';
+  pngimage in '..\PNGImage\pngimage.pas',
+  WebLabel in 'WebLabel.pas';
 
 end.

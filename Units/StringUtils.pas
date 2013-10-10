@@ -1397,13 +1397,14 @@ end;
 
 function HexDump(const Buf; BufSize: Integer; Opt: THexDumpOptions): String;
 var
-  Start, I: Integer;
+  Start, I, EmptyCells: Integer;
   Hexes, Chars, Hex, Ch: String;
   Ptr: PByte;
 begin
   Result := '';
   Start := 0;
   Opt.EmptyCells := Opt.EmptyCells mod Opt.PerLine;
+  EmptyCells := Opt.EmptyCells;
   Ptr := @Buf;
 
   while Start < BufSize do
@@ -1413,11 +1414,11 @@ begin
 
     for I := 0 to Opt.PerLine - 1 do
     begin
-      if (Opt.EmptyCells > 0) or (I + Start >= BufSize) then
+      if (EmptyCells > 0) or (I + Start - Opt.EmptyCells >= BufSize) then
       begin
         Ch := ' ';
         Hex := '  ';
-        Dec(Opt.EmptyCells);
+        Dec(EmptyCells);
       end
       else
       begin
@@ -1430,9 +1431,9 @@ begin
         if Ch[1] in [#9, #10, #13] then
         begin
           case Ch[1] of
-          #9:   Ch := 't';
-          #10:  Ch := 'n';
-          #13:  Ch := 'r';
+          #9:   Ch := 'T';
+          #10:  Ch := 'N';
+          #13:  Ch := 'R';
           end;
 
           Hex := '{@wi ' + Hex + '}';
@@ -1494,7 +1495,8 @@ begin
 
     if HeadSize < BufSize then
     begin
-      Opt.EmptyCells := HeadSize;
+      Opt.EmptyCells := HeadSize mod OPt.PerLine;
+      Inc(Opt.BufOffset, HeadSize - Opt.EmptyCells);
       Result := Result + Opt.EOLN + HexDump(Pointer( Integer(@Buf) + HeadSize )^, BufSize - HeadSize, Opt);
     end;
   end;

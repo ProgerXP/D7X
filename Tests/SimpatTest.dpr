@@ -58,6 +58,7 @@ begin
   Matches('[\ID]+', 'DI');
   Mismatches('[\ID]+', 'id');
   Mismatches('[\ID]+', 'FG');
+  Matches('LAT+ EOF', 'aZzA');
   Mismatches('EOLN', '');
   Mismatches('EOF', SimpatDefaultEOLN);
   Matches('EOLN', SimpatDefaultEOLN);

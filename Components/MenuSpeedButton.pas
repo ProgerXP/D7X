@@ -11,14 +11,17 @@ uses
 type
   TMenuSpeedButton = class (TSpeedButton)
   protected
-    FMenu: TPopupMenu;
-    FShowUnderControl: TControl;
+    FMenu, FMenuAlt: TPopupMenu;
+    FUnderControl: TControl;
+
+    procedure MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
   public
-    constructor Create(AOwner: TComponent); override;
     procedure Click; override;
+    procedure PopItUp(Menu: TPopupMenu; Under: TControl);  // nil Under = Self.
   published
     property PopupMenu: TPopupMenu read FMenu write FMenu;
-    property ShowUnderControl: TControl read FShowUnderControl write FShowUnderControl;
+    property PopupMenuAlt: TPopupMenu read FMenuAlt write FMenuAlt;
+    property UnderControl: TControl read FUnderControl write FUnderControl;
   end;
 
 procedure Register;
@@ -32,37 +35,33 @@ begin
   RegisterComponents('D7X', [TMenuSpeedButton]);
 end;
 
-constructor TMenuSpeedButton.Create;
-begin               
-  inherited;
-   
-  FMenu := NIL;
-  FShowUnderControl := NIL
-end;
-
 // Coltrols.pas: 4695
 procedure TMenuSpeedButton.Click;
 begin
-  if not (csDesigning in ComponentState) and (ActionLink <> nil) then
-    ActionLink.Execute(Self)
-  else
-  begin
-    if Assigned(OnClick) and ((Action = NIL) or (@OnClick <> @Action.OnExecute)) then
-      OnClick(Self);
+  inherited Click;
+  PopItUp(FMenu, FUnderControl);
+end;
 
-    if FMenu <> NIL then
-    begin
-      ShowUnderControl := Self;
+procedure TMenuSpeedButton.MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  inherited;
+  if Button = mbRight then
+    PopItUp(FMenuAlt, FUnderControl);
+end;
 
-      with ShowUnderControl, ClientToScreen(Point(0, Height)) do
-        case FMenu.Alignment of
-        paLeft: FMenu.Popup(X, Y);
-        paCenter: FMenu.Popup(X + Width div 2, Y)
-          else
-            FMenu.Popup(X + Width, Y)
-        end
-    end
-  end
+procedure TMenuSpeedButton.PopItUp(Menu: TPopupMenu; Under: TControl);
+begin
+  if Under = nil then
+    Under := Self;
+
+  if Menu <> nil then
+    with Under, ClientToScreen(Point(0, Height)) do
+      case Menu.Alignment of
+      paLeft:   Menu.Popup(X, Y);
+      paCenter: Menu.Popup(X + Width div 2, Y);
+      else
+        Menu.Popup(X + Width, Y);
+      end
 end;
 
 end.
