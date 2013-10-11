@@ -147,7 +147,7 @@ begin
   end;
 end;        
 
-function ProcCaller(Settings: Pointer): DWord; stdcall;
+function ProcCaller(Settings: Pointer): Integer;
 begin
   with TProcSettings(Settings^) do
     try
@@ -238,7 +238,7 @@ end;
 procedure TSingleThread.Run;
 begin
   if not Running then
-    FHandle := CreateThread(NIL, 0, @ProcCaller, @FSettings, 0, FThreadID);
+    FHandle := BeginThread(nil, 0, @ProcCaller, @FSettings, 0, FThreadID);
 end;
 
 procedure TSingleThread.Wait;

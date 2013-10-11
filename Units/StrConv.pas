@@ -129,8 +129,8 @@ begin
 
   if RegOpenKeyEx(HKEY_CLASSES_ROOT, PChar('MIME\Database\Codepage\' + IntToStr(ID)), 0, KEY_QUERY_VALUE, Key) = ERROR_SUCCESS then
     try
-      SetLength(Result, 4096);
-      BufSize := SizeOf(Result);
+      SetLength(Result, 256);
+      BufSize := Length(Result);
 
       if GetDescription then
         Field := 'Description'

@@ -1459,7 +1459,13 @@ begin
 
     if (Result <> '') and (not Opt.NoLnOn80 or (Opt.PerLine mod 16 <> 0)) then
       Result := Result + Opt.EOLN;
-    Result := Result + Format('{@wi %.8X}    %s   %s', [Opt.BufOffset + Start, Hexes, Chars]);
+
+    if Opt.ColorConsole then
+      Result := Result + '{@wi ' + IntToHex(Opt.BufOffset + Start, 8) + '}'
+    else                                                                   
+      Result := Result + IntToHex(Opt.BufOffset + Start, 8);
+
+    Result := Result + '    ' + Hexes + '   ' + Chars;
     Inc(Start, Opt.PerLine);
   end;
 end;
