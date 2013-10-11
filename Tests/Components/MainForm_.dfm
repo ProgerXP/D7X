@@ -178,18 +178,7 @@ object MainForm: TMainForm
     Width = 74
     Height = 13
     Caption = 'D7X homepage'
-    Font.Charset = DEFAULT_CHARSET
-    Font.Color = clNavy
-    Font.Height = -11
-    Font.Name = 'MS Sans Serif'
-    Font.Style = [fsUnderline]
-    ParentFont = False
     URL = 'http://proger.i-forge.net/D7X_-_Delphi_7_eXtension_library/7FB'
-    HoverFont.Charset = DEFAULT_CHARSET
-    HoverFont.Color = clBlue
-    HoverFont.Height = -11
-    HoverFont.Name = 'MS Sans Serif'
-    HoverFont.Style = [fsUnderline]
   end
   object edDialog: TEdit
     Left = 8

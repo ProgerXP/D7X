@@ -140,13 +140,14 @@ Item3=..\..\D7X\Classes;..\..\D7X\Functions
 Count=1
 Item0=WinTypes=Windows;WinProcs=Windows;DbiTypes=BDE;DbiProcs=BDE;DbiErrs=BDE;
 [HistoryLists\hlSearchPath]
-Count=6
+Count=7
 Item0=..\..\Units;..\..\Components;..\..\PNGImage
-Item1=..\..\Library;..\..\3rd party\D7X\Units;..\..\3rd party\D7X\Components;..\..\3rd party\PNGImage
-Item2=..\..\Library;..\..\3rd party\D7X\Units;..\..\3rd party\D7X\Components
-Item3=..\..\Library;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions;..\..\D7X\Components
-Item4=$(DELPHI)\Lib\Debug;..\..\Library;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions;..\..\D7X\Components
-Item5=..\..\Library;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions
+Item1=$(DELPHI)\Lib\Debug;..\..\Units;..\..\Components;..\..\PNGImage
+Item2=..\..\Library;..\..\3rd party\D7X\Units;..\..\3rd party\D7X\Components;..\..\3rd party\PNGImage
+Item3=..\..\Library;..\..\3rd party\D7X\Units;..\..\3rd party\D7X\Components
+Item4=..\..\Library;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions;..\..\D7X\Components
+Item5=$(DELPHI)\Lib\Debug;..\..\Library;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions;..\..\D7X\Components
+Item6=..\..\Library;..\..\D7X\Classes;..\..\D7X\Classes\Data providers;..\..\D7X\Functions
 [HistoryLists\hlUnitOutputDirectory]
 Count=2
 Item0=..\..
