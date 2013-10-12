@@ -1481,6 +1481,16 @@ begin
 end;
 
 function HexDumpCut(const Buf; BufSize: Integer; const CutOffset: Int64; Opt: THexDumpOptions): String;
+  function PadCenter(const Dump: String): String;
+  var
+    LineLen: Integer;
+  begin
+    LineLen := Pos(Opt.EOLN, Dump);
+    if LineLen < 1 then
+      LineLen := Length(Dump);
+    Result := StringOfChar(' ', (LineLen - Length(Opt.Cutter)) div 2);
+  end;
+
 var
   HeadSize: Integer;
 begin
@@ -1494,17 +1504,22 @@ begin
     if (Result <> '') and (not Opt.NoLnOn80 or (Opt.PerLine mod 16 <> 0)) then
       Result := Result + Opt.EOLN;
 
-    if Opt.ColorConsole then                                              
+    if Opt.ColorConsole then
       Result := Result + '{<{mi ' + CCQuote(Opt.Cutter, CCParsing) + '}}'
-    else
-      Result := Result + CCQuote(Opt.Cutter, CCParsing);
+    else if HeadSize > 0 then
+      Result := Result + PadCenter(Result) + Opt.Cutter;
 
     if HeadSize < BufSize then
     begin
       Opt.EmptyCells := HeadSize mod OPt.PerLine;
       Inc(Opt.BufOffset, HeadSize - Opt.EmptyCells);
-      Result := Result + Opt.EOLN + HexDump(Pointer( Integer(@Buf) + HeadSize )^, BufSize - HeadSize, Opt);
+      if Result <> '' then  
+        Result := Result + Opt.EOLN;
+      Result := Result + HexDump(Pointer( Integer(@Buf) + HeadSize )^, BufSize - HeadSize, Opt);
     end;
+
+    if not Opt.ColorConsole and (HeadSize <= 0) then
+      Result := PadCenter(Result) + Opt.Cutter + Opt.EOLN + Result;
   end;
 end;
 
