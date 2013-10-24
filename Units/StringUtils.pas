@@ -1494,7 +1494,7 @@ function HexDumpCut(const Buf; BufSize: Integer; const CutOffset: Int64; Opt: TH
 var
   HeadSize: Integer;
 begin
-  if (CutOffset < Opt.BufOffset) or (CutOffset >= Opt.BufOffset + BufSize) then
+  if (CutOffset < Opt.BufOffset) or (CutOffset > Opt.BufOffset + BufSize) then
     Result := HexDump(Buf, BufSize, Opt)
   else
   begin

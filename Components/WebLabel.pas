@@ -22,13 +22,12 @@ type
 
     procedure CMMouseEnter(var Msg: TMessage); message CM_MOUSEENTER;
     procedure CMMouseLeave(var Msg: TMessage); message CM_MOUSELEAVE;
-    procedure Click; override;
-
     procedure SetHoverFont(Value: TFont);
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
-    
+
+    procedure Click; override;
     procedure CopyFont(Source: TFont);
   published
     property Cursor default crHandPoint;

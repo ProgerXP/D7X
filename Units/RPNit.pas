@@ -334,10 +334,12 @@ function RpnStr(const Str: WideString): TRpnScalar;
 function RpnKindToStr(Kind: TRpnValueKinds): String;
 function RpnValueToStr(Value: TRpnScalar; Null: WideString = ''''''): WideString;
 function RpnValueToInt(Value: TRpnScalar): Integer;
+function CompareRpnValues(const A, B: TRpnScalar): Boolean;
 
 // raises EDuplicateRpnOperator:
 procedure RegisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
 function RpnOpClassByName(const Name: String): TRpnOperatorClass;
+procedure UnregisterAllDefaultRpnOperators;
 // these 2 do nothing if Op is not defined:
 procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
 procedure UnregisterDefaultRpnOperatorsOf(OpClass: TRpnOperatorClass);
@@ -494,6 +496,31 @@ begin
           Error;
 end;
 
+function CompareRpnValues(const A, B: TRpnScalar): Boolean;
+const
+  NilRPN = 'null';
+  Error = 'Incomparable RPN values of types: A (%s) = %s, B (%s) = %s. Can only compare' +
+          ' these combinations: null-any or any-null or null/null, num-num, bool-bool,' +
+          ' str-str, bytes-bytes, num-str or str-num.';
+begin
+  if [valBool] * A.Kind * B.Kind <> [] then
+    Result := A.Bool = B.Bool
+    else if [valNum] * A.Kind * B.Kind <> [] then
+      Result := A.Num = B.Num
+      else if [valBytes] * A.Kind * B.Kind <> [] then
+        Result := (Length(A.Bytes) = Length(B.Bytes)) and CompareMem( @A.Bytes[1], @B.Bytes[1], Length(A.Bytes) )
+        else if [valStr] * A.Kind * B.Kind <> [] then
+          Result := A.Str = B.Str
+          else if ((valNum in A.Kind) and (valStr in B.Kind)) or
+                  ((valNum in B.Kind) and (valStr in A.Kind)) then
+            Result := RpnValueToStr(A, NilRPN) = RpnValueToStr(B, NilRPN)
+            else if (A.Kind = []) or (B.Kind = []) then
+              Result := (A.Kind = []) and (B.Kind = [])
+              else
+                raise EInvalidRpnOperation.Create(Error, [RpnValueToStr(A, NilRPN), RpnKindToStr(A.Kind),
+                                                          RpnValueToStr(B, NilRPN), RpnKindToStr(B.Kind)]);
+end;
+
 procedure RegisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
 begin
   if DefaultOperators = NIL then
@@ -513,6 +540,11 @@ begin
 
   if not Result.InheritsFrom(TRpnOperator) then
     raise EInvalidPointer.CreateFmt(Error, [Result, TRpnOperator]);
+end;
+
+procedure UnregisterAllDefaultRpnOperators;
+begin
+  DefaultOperators.Clear;
 end;
 
 procedure UnregisterDefaultRpnOperator(Op: WideChar; OpClass: TRpnOperatorClass);
