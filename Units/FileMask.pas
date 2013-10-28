@@ -36,38 +36,65 @@ type
     FCaseSensitive: Boolean;
     FMask, FNameMask: WideString;
     FSearches: TFMStack;
+    FCurrent: WideString;
 
     procedure AddSearchPath(Path: WideString);
     procedure SearchNextFile;
     function ShouldSkip(const Name: WideString): Boolean;
+    function MightHaveMore: Boolean;
 
     procedure SetMaxRecursionDepth(Value: Word);
     function GetRecursive: Boolean;
     procedure SetRecursive(Value: Boolean);
     procedure SetMask(const Value: WideString);
+    function GetCurrent: WideString;
   public
     constructor Create;
     destructor Destroy; override;
-    procedure ToStart;
+    procedure ToStart; 
 
     property MaxRecursionDepth: Word read FMaxRecursionDepth write SetMaxRecursionDepth default 50;  // inclusive.
-    property Recursive: Boolean read GetRecursive write SetRecursive;
+    property Recursive: Boolean read GetRecursive write SetRecursive default False;
     property CaseSensitive: Boolean read FCaseSensitive write FCaseSensitive default False;
 
     property Mask: WideString read FMask write SetMask;
-    function HasMore: Boolean;
-    function Next: WideString;
-    // HasMore isn't always accurate and for use in a loop you must call Next and check
+    function Next: WideString; virtual;
+    // MightHaveMore isn't always accurate and for use in a loop you must call Next and check
     // if it has returned ''. Or you can use this method as a shortcut:
-    //   while PutNextTo(FileName) do ...
+    //   while NextTo(FileName) do ...
     // instead of
     //   while True do begin FileName := Next; if FileName = '' then Break; ... end;
-    function PutNextTo(out NextFile: WideString): Boolean;
+    function NextTo(out NextFile: WideString): Boolean;
+    property Current: WideString read GetCurrent;
+  end;
+
+  TMultipleMasksResolver = class (TMaskResolver)
+  protected
+    FMasks: TWideStringArray;
+    FCurrentMask: Integer;
+      
+    function GetMasks: WideString;
+    procedure SetMasks(const Value: WideString);
+    procedure SetMaskArray(const Value: TWideStringArray);
+    procedure SetCurrentMask(const Value: Integer);
+  public
+    property Masks: WideString read GetMasks write SetMasks;
+    property MaskArray: TWideStringArray read FMasks write SetMaskArray;
+    function MaskCount: Integer;
+    property CurrentMask: Integer read FCurrentMask write SetCurrentMask;
+    procedure SetFromString(const Value: WideString; const Delim: WideString = ',');
+    function AsString(const Delim: WideString = ','): WideString;
+
+    procedure ToStart; reintroduce;
+    function Next: WideString; override;
   end;
 
   TFileMask = TMaskResolver;
+  TFileMasks = TMultipleMasksResolver;
 
 implementation
+
+uses Classes;
 
 { TFMStack }
 
@@ -148,7 +175,7 @@ end;
 constructor TMaskResolver.Create;
 begin
   FMaxRecursionDepth := 0;
-  Recursive := True;
+  Recursive := False;
   FCaseSensitive := False;
   FSearches := TFMStack.Create;
 
@@ -198,7 +225,8 @@ begin
 end;
 
 procedure TMaskResolver.ToStart;
-begin
+begin                                 
+  FCurrent := '';
   FSearches.Clear;
   AddSearchPath( ExtractFilePath(FMask) );
 end;
@@ -234,7 +262,7 @@ begin
         FSearches.Pop;
 end;
 
-function TMaskResolver.HasMore: Boolean;
+function TMaskResolver.MightHaveMore: Boolean;
 begin
   Result := (FMask <> '') and not FSearches.IsEmpty;
 end;
@@ -243,7 +271,7 @@ function TMaskResolver.Next: WideString;
 var
   BasePath: WideString;
 begin
-  while HasMore do
+  while MightHaveMore do
   begin
     Result := FSearches.TopRec.cFileName;
     if ShouldSkip(Result) then
@@ -260,13 +288,17 @@ begin
         if (FCaseSensitive and MaskMatch(Result, FNameMask)) or
            (not FCaseSensitive and MaskMatch(WideLowerCase(Result), FNameMask)) then
         begin
+          if Copy(BasePath, 1, 2) = '.' + PathDelim then
+            Delete(BasePath, 1, 2);
           Insert(BasePath, Result, 1);
+          FCurrent := Result;
           Exit;
         end;
       end;
   end;
 
   Result := '';
+  FCurrent := '';
 end;
 
 function TMaskResolver.ShouldSkip(const Name: WideString): Boolean;
@@ -274,10 +306,78 @@ begin
   Result := (Length(Name) = 0) or (Name = '.') or (Name = '..');
 end;
 
-function TMaskResolver.PutNextTo(out NextFile: WideString): Boolean;
+function TMaskResolver.NextTo(out NextFile: WideString): Boolean;
 begin
   NextFile := Next;
   Result := Length(NextFile) <> 0;
+end;
+
+function TMaskResolver.GetCurrent: WideString;
+begin
+  if FCurrent = '' then
+    FCurrent := Next;
+  Result := FCurrent;
+end;
+
+{ TMultipleMasksResolver }
+
+function TMultipleMasksResolver.GetMasks: WideString;
+begin
+  Result := AsString;
+end;
+
+procedure TMultipleMasksResolver.SetMasks(const Value: WideString);
+begin
+  SetFromString(Value);
+end;
+
+procedure TMultipleMasksResolver.SetFromString(const Value, Delim: WideString);
+begin
+  MaskArray := TrimStringArray( Explode(Delim, Value) );
+end;
+
+function TMultipleMasksResolver.AsString(const Delim: WideString): WideString;
+begin
+  Result := Join(FMasks, Delim);
+end;
+              
+procedure TMultipleMasksResolver.SetMaskArray(const Value: TWideStringArray);
+begin
+  FMasks := Value;
+  if Length(FMasks) = 0 then
+    Mask := ''
+    else
+      CurrentMask := 0;
+end;
+
+function TMultipleMasksResolver.MaskCount: Integer;
+begin
+  Result := Length(FMasks);
+end;
+
+procedure TMultipleMasksResolver.ToStart;
+begin
+  inherited;
+  CurrentMask := 0;
+end;
+
+function TMultipleMasksResolver.Next: WideString;
+begin
+  Result := inherited Next;
+
+  while (Result = '') and (FCurrentMask < Length(FMasks) - 1) do
+  begin
+    CurrentMask := CurrentMask + 1;
+    Result := Next;
+  end;
+end;
+
+procedure TMultipleMasksResolver.SetCurrentMask(const Value: Integer);
+begin
+  if (Value < 0) or (Value >= Length(FMasks)) then
+    raise EListError.CreateFmt('File mask index (%d) out of bounds (0..%d).', [Value, Length(FMasks)]);
+  FCurrentMask := Value;
+  Mask := FMasks[Value];
 end;
 
 end.
