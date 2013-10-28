@@ -568,7 +568,8 @@ var
   I: DWord;
   S: TStringListW;
 begin
-  BasePath := IncludeTrailingBackslash(BasePath);
+  if BasePath <> '' then
+    BasePath := IncludeTrailingBackslash(BasePath);
 
   S := TStringListW.Create;
   FindMask(BasePath + Mask, S);
@@ -1143,7 +1144,7 @@ function BrowseForFolderCallback(Wnd: HWND; uMsg: UINT; lParam, lpData: LPARAM):
 begin
   // lpData = initial path.
 	if (uMsg = BFFM_INITIALIZED) and (lpData <> 0) then
-  	SendMessage(Wnd, BFFM_SETSELECTION, 1, lpData);
+  	SendMessage(Wnd, BFFM_SETSELECTIONW, 1, lpData);
 
 	Result := 0;  // should be always 0.
 end;
@@ -1160,7 +1161,7 @@ begin
   begin
     hWndOwner := OwnerWindow;
     lpszTitle := PWideChar(Caption);
-    ulFlags := BIF_RETURNONLYFSDIRS or BIF_USENEWUI;
+    ulFlags := BIF_RETURNONLYFSDIRS or BIF_USENEWUI or BIF_STATUSTEXT ;
     SHGetSpecialFolderLocation(0, CSIDL_DESKTOP, pidlRoot);
     lpfn := BrowseForFolderCallback;
     lParam := Integer( PWideChar(DefaultPath) );
@@ -1171,7 +1172,7 @@ begin
   begin
     SetLength(Result, MAX_PATH);
     if SHGetPathFromIDListW(ResPIDL, @Result[1]) then
-      // PChar() - to trim trailing #0s.
+      // PWideChar() - to trim trailing #0s.
       Result := IncludeTrailingPathDelimiter( PWideChar(Result) )
       else
         Result := '';

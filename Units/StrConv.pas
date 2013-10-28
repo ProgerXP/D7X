@@ -41,7 +41,7 @@ end;
 function MinStrConvBufSize(DestCodepage: TCodepage; Wide: WideString): Integer;
 begin
   if DestCodepage = CP_ASIS then
-    Result := Length(Wide) * 2 + 2 {null char}
+    Result := Length(Wide) * 2 + 1 {null char}
     else
       Result := WideCharToMultiByte(DestCodepage, 0, PWideChar(Wide), -1, NIL, 0, NIL, NIL)
 end;

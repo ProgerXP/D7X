@@ -47,7 +47,7 @@ type
     procedure UpdateFile; virtual; abstract;
     function ValueExists(const Section, Ident: WideString): Boolean;
 
-    function FirstSection: WideString; virtual;
+    function FirstSection: WideString; virtual; // errors if empty.
     procedure ReadSections(Strings: TStrings); overload;
     procedure ReadSectionValues(const Section: WideString; Strings: TStrings;
       Clear: Boolean = True); overload;
@@ -89,6 +89,7 @@ type
     procedure Reload; override;
     procedure CopyAllFrom(Ini: TCustomIniFileW); override;
     function SectionCount: Integer;
+    function ValueCount(const Section: WideString): Integer;
   end;
 
   // TIniFileW is useful when INI is shared since it doesn't buffer data but
@@ -582,7 +583,7 @@ begin
   Result := FSections.CaseSensitive;
 end;
 
-procedure TMemIniFileW.GeTStrings(List: TStringsW);
+procedure TMemIniFileW.GetStrings(List: TStringsW);
 var
   I, J: Integer;
   Strings: TStringsW;
@@ -799,6 +800,17 @@ end;
 function TMemIniFileW.SectionCount: Integer;
 begin
   Result := FSections.Count;
+end;
+
+function TMemIniFileW.ValueCount(const Section: WideString): Integer;
+var
+  I: Integer;
+begin
+  I := FSections.IndexOf(Section);
+  if I >= 0 then
+    Result := TStringsW(FSections.Objects[I]).Count
+  else
+    Result := 0;
 end;
 
 { TIniFileW }
