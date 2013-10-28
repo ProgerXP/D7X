@@ -6,7 +6,6 @@ uses SysUtils, StringsW, StringUtils;
 
 type
   TCallbackHash = class
-  private
   protected
     FHash: TObjectHash;
 
@@ -29,7 +28,7 @@ type
 
     procedure ToMethod(Index: Integer; out Callback);
     function ToMethodBy(Key: WideString; out Callback): Boolean;
-                                                                              
+
     function Count: Integer;
     property Duplicates: TDuplicatesEx read GetDuplicates write SetDuplicates default dupError;
     property CaseSensitive: Boolean read GetCaseSens write SetCaseSens default False;
@@ -37,7 +36,7 @@ type
     function JoinKeys(Glue: WideString): WideString;
     function ToString: WideString;    // alias for JoinKeys(', ').
   end;
-                           
+
   TArgList = class
   protected
     FValues: TWideStringArray;
@@ -147,7 +146,7 @@ begin
 
   Result := False;
 end;
-                
+
 function TCallbackHash.Delete(const Key: WideString): Boolean;
 begin
   Result := FHash.Delete(Key);
@@ -190,7 +189,7 @@ begin
 end;
 
 procedure TCallbackHash.SetDuplicates(const Value: TDuplicatesEx);
-begin  
+begin
   FHash.Sorted := Value <> StringsW.dupIgnore;
   FHash.Duplicates := Value;
 end;
@@ -209,7 +208,7 @@ procedure TCallbackHash.SetCaseSens(Value: Boolean);
 begin
   FHash.CaseSensitive := Value;
 end;
-    
+
 { TArgList }
 
 constructor TArgList.Create(const Str: WideString);

@@ -139,7 +139,8 @@ function FormatSize(Bytes: DWord): WideString;
 function PosLast(const Substr, Str: String; Start: Word = 1): Integer;
 function PosLastW(const Substr, Str: WideString; Start: Word = 1): Integer;
 function PosW(const Substr, Str: WideString; StartPos: Integer = 1; EndPos: Integer = MaxInt): Integer;
-
+                                                                                                
+procedure DeleteArrayItem(var A: TWideStringArray; Index: Integer);
 // SysUtils has Trim, TrimLeft, TrimRight that works as Chars = ' ' so these has Chars required.
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
 function Trim(Str: WideString; const Chars: WideString): WideString; overload;
@@ -667,6 +668,13 @@ end;
       end;
   end;
 
+procedure DeleteArrayItem(var A: TWideStringArray; Index: Integer);
+begin
+  for Index := Index to Length(A) - 2 do
+    A[Index] := A[Index + 1];
+  SetLength(A, Length(A) - 1);
+end;
+
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
 var
   I: Word;
@@ -674,7 +682,7 @@ begin
   Result := WSArray;
   if Length(Result) <> 0 then
     for I := 0 to Length(Result) - 1 do
-      Result[I] := sysutils.Trim(Result[I])
+      Result[I] := Trim(Result[I])
 end;
 
 function Trim(Str: WideString; const Chars: WideString): WideString;

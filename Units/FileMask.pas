@@ -342,8 +342,15 @@ begin
 end;
               
 procedure TMultipleMasksResolver.SetMaskArray(const Value: TWideStringArray);
+var
+  I: Integer;
 begin
   FMasks := Value;
+
+  for I := Length(FMasks) - 1 downto 0 do
+    if FMasks[I] = '' then
+      DeleteArrayItem(FMasks, I);
+
   if Length(FMasks) = 0 then
     Mask := ''
     else

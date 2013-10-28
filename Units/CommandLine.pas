@@ -1044,7 +1044,7 @@ begin
   ConsoleWriteLn(Help);
 
   if Detailed then
-    ConsoleWriteLn(F_EOLN + HelpDetails);
+    ConsoleWriteLn(HelpDetails);
 end;
 
 procedure TCLApplication.ErrorWriteLn(const Str: WideString);
@@ -1450,7 +1450,7 @@ begin
     else
       S := Join(Lines, F_EOLN);
 
-  ConsoleWriteLn(S);
+  ConsoleWrite(S);
 end;
 
 procedure TCLColorApplication.OutputExitCode(Code: Integer);
