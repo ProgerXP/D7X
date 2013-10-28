@@ -151,6 +151,12 @@ begin
   for I := 1 to 100 do
     Assert((M.Next = '') and (M.Current = ''));
 
+  M.Masks := '1,, ,2,3,,4';
+  Assert(m.MaskCount = 4);
+  Assert(m.AsString = '1,2,3,4');
+  M.Masks := '';
+  Assert(m.MaskCount = 0);
+
   M.Free;
 end;
 

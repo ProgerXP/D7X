@@ -57,14 +57,20 @@ type
 
   TCCWriting = record
     Original: WideString;
-    Coord: TCoord;
     MaxCoord: TCoord;
+    Coord: TCoord;
+    OverflowIndex: Integer;   // is increased when screen buffer overflows max MaxCoord.Y.
     LastPartIndex: Integer;
     PostWriters: TCCPostWriters;
     Options: TCCWritingOptions;
   end;
 
-  TCCPostWriter = procedure (var Context: TCCWriting; Start: TCoord) of object;
+  TCCStart = record
+    Coord: TCoord;
+    OverflowIndex: Integer;
+  end;
+
+  TCCPostWriter = procedure (var Context: TCCWriting; Start: TCCStart) of object;
 
   EColorConsole = class (Exception);
 
@@ -85,7 +91,7 @@ type
 
     procedure Add(Func: TCCPostWriter);
     procedure Remove(Func: TCCPostWriter);
-    procedure Call(var Context: TCCWriting; Start: TCoord);
+    procedure Call(var Context: TCCWriting; Start: TCCStart);
   end;
 
   TCCVarGetter = class
@@ -236,7 +242,7 @@ type
           procedure Parse(var Context: TCCParsing); override;
           function ParseColors(const Context: TCCParsing; const Colors, Delim: WideString): DWord;
 
-          procedure PostWrite(var Context: TCCWriting; Start: TCoord);
+          procedure PostWrite(var Context: TCCWriting; Start: TCCStart);
         public
           class function TryParsing(var Context: TCCParsing): TCCPart; override;
           class function ValidColorFlags: WideString;
@@ -276,7 +282,8 @@ type
 
       TCCAbsFillPart = class (TCCRepeatingPart)
       protected
-        FX, FLastY: Integer;
+        FX: Integer;
+        FLast: TCCStart;
       public
         class function TryParsing(var Context: TCCParsing): TCCPart; override;
 
@@ -402,6 +409,12 @@ end;
 function DefaultCCVars: TCCVarList;
 begin
   Result := CCVars;
+end;
+
+function CCStartFromWriting(const CCWriting: TCCWriting): TCCStart;
+begin
+  Result.Coord := CCWriting.Coord;
+  Result.OverflowIndex := CCWriting.OverflowIndex;
 end;
 
 { Exceptions }
@@ -574,7 +587,7 @@ begin
     end;
 end;
 
-procedure TCCPostWriters.Call(var Context: TCCWriting; Start: TCoord);
+procedure TCCPostWriters.Call(var Context: TCCWriting; Start: TCCStart);
 var
   I: Integer;
 begin
@@ -588,7 +601,7 @@ class procedure TCCParsedStr.Writer(Str: WideString; var Context);
 var
   Written: DWord;
   Ansi: String;
-  Start: TCoord;
+  Start: TCCStart;
 begin
   with TCCWriting(Context) do
   begin
@@ -599,12 +612,13 @@ begin
 
     WriteFile(Options.Handle, Ansi[1], Length(Ansi), Written, NIL);
 
-    Start := Coord;
+    Start := CCStartFromWriting( TCCWriting(Context) );
     AdvanceCoord(Coord, Str);
 
     if Coord.Y >= MaxCoord.Y then
-    begin
-      Dec(Start.Y, Coord.Y - MaxCoord.Y);
+    begin                                
+      Inc(OverflowIndex, Coord.Y - MaxCoord.Y + 1);
+      Dec(Start.Coord.Y, OverflowIndex - Start.OverflowIndex);
       Coord.Y := MaxCoord.Y - 1;
     end;
 
@@ -1134,14 +1148,15 @@ begin
       inherited;
 end;
 
-procedure TCCColorPart.PostWrite(var Context: TCCWriting; Start: TCoord);
+procedure TCCColorPart.PostWrite(var Context: TCCWriting; Start: TCCStart);
 var
   Len: Integer;
   Written: DWord;
 begin
-  Len := (Context.Coord.Y - Start.Y) * LineLen + (Context.Coord.X - Start.X);
+  Len := LineLen * (Context.Coord.Y - Start.Coord.Y)
+         + (Context.Coord.X - Start.Coord.X);
   if Len > 0 then
-    FillConsoleOutputAttribute(Context.Options.Handle, FAttrs, Len, Start, Written);
+    FillConsoleOutputAttribute(Context.Options.Handle, FAttrs, Len, Start.Coord, Written);
 end;
 
 { TCCAlignedPart }
@@ -1254,15 +1269,16 @@ function TCCAbsFillPart.Repeats(var Context: TCCWriting; Iterations: Integer): B
 begin
   EnsureFollowsAnyPart(Context);
 
-  if FLastY = -1 then
-    FLastY := Context.Coord.Y;
+  if FLast.Coord.Y = -1 then
+    FLast := CCStartFromWriting(Context);
 
-  Result := (FLastY = Context.Coord.Y) and (FX > Context.Coord.X);
+  Result := (FLast.Coord.Y = Context.Coord.Y) and (FLast.OverflowIndex = Context.OverflowIndex) and
+            (FX > Context.Coord.X);
 end;
 
 procedure TCCAbsFillPart.ExitWrite;
 begin
-  FLastY := -1;
+  FLast.Coord.Y := -1;
 end;
 
 { TCCHexCharPart }
