@@ -129,6 +129,10 @@ function CurrentProcessInfo: TProcessInformation;
 // ProcessID = 0 returns info about current process. Result of 0 length indicates error of
 // OpenProcess or EnumProcessModules.
 function GetProcessModules(ProcessID: DWord = 0): TProcessModules;
+// Returns True if the process has been successfully started. Returns when it's finished.
+// Exe can be nil if Args contains it (regular CL format: "exe" "arg1" ...).
+function RunAndWait(const Exe: WideString; const Args: WideString = '';
+  ProcessFlags: DWord = CREATE_NEW_CONSOLE or NORMAL_PRIORITY_CLASS): Boolean;
 
 { recursive functions }
 function CopyDirectory(Source, Destination: WideString): Boolean;
@@ -878,6 +882,37 @@ begin
   end;
 
   CloseHandle(ProcHandle);
+end;
+
+function RunAndWait(const Exe, Args: WideString; ProcessFlags: DWord): Boolean;
+  function OrNil(const S: WideString): PWideChar;
+  begin
+    if S = '' then
+      Result := nil
+    else
+      Result := PWideChar(S);
+  end;
+
+var
+  StartInfo: TStartupInfo;
+  ProcInfo: TProcessInformation;
+  ExitCode: DWord;
+begin
+  ZeroMemory(@ProcInfo, SizeOf(TProcessInformation));
+  StartInfo.cb := SizeOf(TStartupInfo);
+  ZeroMemory(@StartInfo, SizeOf(TStartupInfo));
+
+  Result := CreateProcessW(OrNil(Exe), PWideChar(Args), NIL, NIL,
+                           False, ProcessFlags, NIL, '.', StartInfo, ProcInfo);
+
+  if Result and (ProcInfo.hProcess <> 0) then
+  begin
+    Result := (GetExitCodeProcess(ProcInfo.hProcess, ExitCode) or (ExitCode = STILL_ACTIVE))
+              and (WaitForSingleObject(ProcInfo.hProcess, INFINITE) = WAIT_OBJECT_0);
+
+    CloseHandle(ProcInfo.hProcess);
+    CloseHandle(ProcInfo.hThread)
+  end;
 end;
 
 function CopyDirectory;

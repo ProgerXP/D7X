@@ -669,10 +669,13 @@ end;
   end;
 
 procedure DeleteArrayItem(var A: TWideStringArray; Index: Integer);
-begin
-  for Index := Index to Length(A) - 2 do
-    A[Index] := A[Index + 1];
-  SetLength(A, Length(A) - 1);
+begin                       
+  if Index < Length(A) then
+  begin
+    for Index := Index to Length(A) - 2 do
+      A[Index] := A[Index + 1];
+    SetLength(A, Length(A) - 1);
+  end;
 end;
 
 function TrimStringArray(WSArray: TWideStringArray): TWideStringArray;
