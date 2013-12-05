@@ -135,6 +135,7 @@ function FormatNumber(Number: DWord): WideString; // adds thousand separators.
 function GenericFormat(Number: Single; const Language: TGenericFormatLanguage): WideString;
 function FormatInterval(Millisecs: DWord): WideString;
 function FormatSize(Bytes: DWord): WideString;
+function Plural(Num: Integer; const SfOne: String = ''; const SfOther: String = 's'): String;
 
 function PosLast(const Substr, Str: String; Start: Word = 1): Integer;
 function PosLastW(const Substr, Str: WideString; Start: Word = 1): Integer;
@@ -1149,6 +1150,14 @@ end;
 function FormatSize(Bytes: DWord): WideString;
 begin
   Result := GenericFormat(Bytes, StringUtilsLanguage.SizeFormat);
+end;
+         
+function Plural(Num: Integer; const SfOne, SfOther: String): String;
+begin
+  if Num = 1 then
+    Result := SfOne
+  else
+    Result := SfOther;
 end;
 
 function PosW(const Substr, Str: WideString; StartPos: Integer = 1; EndPos: Integer = MaxInt): Integer;

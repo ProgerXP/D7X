@@ -1032,6 +1032,8 @@ begin
   begin
     OutputHelp(Task = 'help');
     FExitCode := ClExitCodeForHelp;
+    if FWaitOnExit = clWaitOnError then
+      FWaitOnExit := clNeverWait;
   end
     else if Task = 'version' then
       OutputVersion
