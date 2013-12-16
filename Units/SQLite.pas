@@ -1,7 +1,7 @@
 unit SQLite;
 
 {
-  OOP SQLite interface for Delphi 7 for SQLite 3.
+  OOP SQLite 3 interface for Delphi 7.
   in public domain | by Proger_XP | http://proger.i-forge.net/SQLite_for_Delphi_7
 
   Initially based on the sqlite unit from wellwell at http://www.rsdn.ru/forum/delphi/2480456.all.aspx.
@@ -171,17 +171,17 @@ const
   SQLITE_DBSTATUS_MAX                  = 8;   { Largest defined DBSTATUS }
 
   { For sqlite3_limit(): }
-  SQLITE_LIMIT_LENGTH                    = 0;
-  SQLITE_LIMIT_SQL_LENGTH                = 1;
-  SQLITE_LIMIT_COLUMN                    = 2;
-  SQLITE_LIMIT_EXPR_DEPTH                = 3;
-  SQLITE_LIMIT_COMPOUND_SELECT           = 4;
-  SQLITE_LIMIT_VDBE_OP                   = 5;
-  SQLITE_LIMIT_FUNCTION_ARG              = 6;
-  SQLITE_LIMIT_ATTACHED                  = 7;
-  SQLITE_LIMIT_LIKE_PATTERN_LENGTH       = 8;
-  SQLITE_LIMIT_VARIABLE_NUMBER           = 9;
-  SQLITE_LIMIT_TRIGGER_DEPTH             = 10;
+  SQLITE_LIMIT_LENGTH                  = 0;
+  SQLITE_LIMIT_SQL_LENGTH              = 1;
+  SQLITE_LIMIT_COLUMN                  = 2;
+  SQLITE_LIMIT_EXPR_DEPTH              = 3;
+  SQLITE_LIMIT_COMPOUND_SELECT         = 4;
+  SQLITE_LIMIT_VDBE_OP                 = 5;
+  SQLITE_LIMIT_FUNCTION_ARG            = 6;
+  SQLITE_LIMIT_ATTACHED                = 7;
+  SQLITE_LIMIT_LIKE_PATTERN_LENGTH     = 8;
+  SQLITE_LIMIT_VARIABLE_NUMBER         = 9;
+  SQLITE_LIMIT_TRIGGER_DEPTH           = 10;
 
 type
   PCharArray = array[$0..$1FFFFFFE] of PChar;

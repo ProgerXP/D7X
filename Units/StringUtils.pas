@@ -1199,7 +1199,7 @@ var
   LastPos: Integer;
 begin
   Result := 0;
-  LastPos := Min(0, Start - 1);
+  LastPos := Max(0, Start - 1);
   while True do
   begin
     LastPos := PosEx(Substr, Str, LastPos + 1);
@@ -1215,7 +1215,7 @@ var
   LastPos: Integer;
 begin
   Result := 0;
-  LastPos := Min(0, Start - 1);
+  LastPos := Max(0, Start - 1);
   while True do
   begin
     LastPos := PosW(Substr, Str, LastPos + 1);

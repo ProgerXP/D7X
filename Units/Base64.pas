@@ -1,4 +1,3 @@
-
 unit Base64;
 
 interface
@@ -8,7 +7,7 @@ interface
     * crypt32.dll (XP version) definitions got from http://www.delphilab.ru/content/view/151/84/
     * Pascal implementation got from (and slightly modified) here:
         http://www.delphisources.ru/pages/faq/base/base64_encode_decode.html
-}            
+}
 
 uses Windows;
 
@@ -67,7 +66,7 @@ type
          var pdwFlags: dword): boolean; stdcall;
 
   TCryptBinaryToString = function (pbBinary: pointer; cbBinary: dword; dwFlags: dword;
-         pszString: PChar; var pcchString: dword): boolean; stdcall;   
+         pszString: PChar; var pcchString: dword): boolean; stdcall;
 
 const
   Crypt32_DLL = 'crypt32.dll';
@@ -87,7 +86,7 @@ begin
 
   CryptStringToBinary := NIL;
   CryptBinaryToString := NIL;
-end;                                
+end;
 
 procedure TryToUseCrypt32;
 begin
@@ -100,7 +99,7 @@ begin
       CryptStringToBinary := GetProcAddress(Crypt32, 'CryptStringToBinaryA');
       CryptBinaryToString := GetProcAddress(Crypt32, 'CryptBinaryToStringA');
     end;
-  except     
+  except
     DoNotUseCrypt32;
   end;
 end;
@@ -127,7 +126,7 @@ begin
   getmem(result, ResultLength);
   CryptBinaryToString(s, length, Flags, pointer(result), ResultLength);
 end;
- 
+
 function Base64XPDecode(s: PChar; length: dword; out ResultLength: DWord; Flags: dword = CRYPT_STRING_BASE64): PChar;
 var
   skip: dword;
@@ -207,7 +206,7 @@ var
   x: SmallInt;
   c4: Word;
   StoredC4: array[0..3] of SmallInt;
-  InLineLength: Integer;         
+  InLineLength: Integer;
 
   function AddChar: Integer;
   begin
@@ -222,7 +221,7 @@ begin
 
   ResultLength := 0;
   GetMem(Result, Length);
-  
+
   try
     while inLineIndex < InLineLength do
     begin
@@ -251,7 +250,7 @@ begin
       begin
         c4 := 0;
         Result[AddChar] := Char((StoredC4[0] shl 2) or (StoredC4[1] shr 4));
-        if StoredC4[2] = -1 then 
+        if StoredC4[2] = -1 then
           inLineIndex := InLineLength
           else
           begin

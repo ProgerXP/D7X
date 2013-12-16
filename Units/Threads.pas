@@ -14,7 +14,7 @@ type
     1: (Int: Integer);
     2: (Num: DWord);
   end;
-  
+
   TSingleThread = class;
 
   { Callback procedure return value depend on the Caller type:
@@ -26,7 +26,7 @@ type
   TThreadOnFinishCallback = procedure (Thread: TSingleThread) of object;
 
   TProcSettings = record
-    Caller: TObject;
+    Caller: TObject;        // TSingleThread or TMMTimer
     Args: TProcArguments;
 
     OnFinish: TThreadOnFinishCallback;
@@ -43,7 +43,7 @@ type
     FHandle: DWord;
     FThreadID: DWord;
     FTimeOut: DWord;
-    
+
     function GetOnFinish: TThreadOnFinishCallback;
     procedure SetOnFinish(const Value: TThreadOnFinishCallback);
     function GetOnException: TOnExceptionCallback;
@@ -93,7 +93,7 @@ type
     constructor Create(ObjectProc: TObjectCallbackProc; const Arguments: TProcArguments = NIL;
       Delay: DWord = 0); overload;
     destructor Destroy; override;
-    
+
     property OnException: TOnExceptionCallback read GetOnException write SetOnException;
 
     property Handle: DWord read FHandle;
@@ -104,7 +104,7 @@ type
     procedure Stop;
     procedure Restart;
   end;
-                        
+
 function ProcArguments(const Pointers: array of const): TProcArguments;
 
 implementation
@@ -113,14 +113,14 @@ uses MMSystem;
 
 const
   TimeOutExitCode = DWord(-2);
-  MinTimerDelay   = 10;  // any TMMTimer Delay will be at least that long. 
+  MinTimerDelay   = 10;  // any TMMTimer Delay will be at least that long.
 
 function ProcArguments(const Pointers: array of const): TProcArguments;
 var
   I: Integer;
 begin
   SetLength(Result, Length(Pointers));
-  
+
   for I := 0 to Length(Pointers) - 1 do
     with Result[I] do
     begin
@@ -145,9 +145,9 @@ begin
     IsObjectProc := IsObject;
     Args := Arguments;
   end;
-end;        
+end;
 
-function ProcCaller(Settings: Pointer): Integer;
+function ProcCaller(Settings: Pointer): DWord; stdcall;
 begin
   with TProcSettings(Settings^) do
     try
@@ -169,7 +169,7 @@ begin
     end;
 end;
 
-{ TSingleThread }            
+{ TSingleThread }
 
 constructor TSingleThread.Create;
 begin
@@ -238,7 +238,7 @@ end;
 procedure TSingleThread.Run;
 begin
   if not Running then
-    FHandle := BeginThread(nil, 0, @ProcCaller, @FSettings, 0, FThreadID);
+    FHandle := CreateThread(NIL, 0, @ProcCaller, @FSettings, 0, FThreadID);
 end;
 
 procedure TSingleThread.Wait;
@@ -320,7 +320,7 @@ constructor TMMTimer.Create(ObjectProc: TObjectCallbackProc; const Arguments: TP
 begin
   FSettings := ProcSettings(Self, NIL, ObjectProc, True, Arguments);
   FHandle := 0;
-  SetDelay(Delay);          
+  SetDelay(Delay);
 end;
 
 destructor TMMTimer.Destroy;
