@@ -1531,7 +1531,7 @@ begin
 
     if HeadSize < BufSize then
     begin
-      Opt.EmptyCells := HeadSize mod OPt.PerLine;
+      Opt.EmptyCells := HeadSize mod Opt.PerLine;
       Inc(Opt.BufOffset, HeadSize - Opt.EmptyCells);
       if Result <> '' then  
         Result := Result + Opt.EOLN;
