@@ -113,6 +113,7 @@ function PadTextWithVariableLineLength(const Str: WideString; const NewLine, Pad
 function StrPad(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
 function StrPadLeft(const Str: WideString; ToLength: Integer; PadChar: WideChar = ' '): WideString;
 function StrRepeat(const Str: WideString; Times: Integer): WideString;
+function StrReverse(const Str: WideString): WideString;
 // it's like PHP's strtr() - replacing chars from CharChars with those in ToChars or
 // removes them if ToChars is shorter than FromChars.
 function StrReplace(const Str: WideString; FromChars, ToChars: WideString): WideString; overload;
@@ -1020,6 +1021,15 @@ begin
   if Str <> '' then
     for Times := Times downto 1 do
       Result := Result + Str;
+end;
+
+function StrReverse(const Str: WideString): WideString;
+var
+  I: Integer;
+begin
+  SetLength(Result, Length(Str));
+  for I := 1 to Length(Str) do
+    Result[I] := Str[Length(Str) - I + 1];
 end;
 
 function StrReplace(const Str: WideString; FromChars, ToChars: WideString): WideString;

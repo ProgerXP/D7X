@@ -54,6 +54,11 @@ function RunAndWait(const Exe: WideString; const Args: WideString = '';
   ProcessFlags: DWord = CREATE_NEW_CONSOLE or NORMAL_PRIORITY_CLASS): Boolean;
 function MainThreadHandleOf(ProcID, Access: DWord): DWord;
 function PatchImport(ProcAddress, NewAddress: Pointer; ImageBase: DWord = 0): Boolean;
+procedure PatchCopying(Dest: Pointer; Source: Pointer; Length: Integer);
+// Concurrency-safe.
+procedure Patch(var Dest; Data: DWord);
+
+{ Windows Exports }
 
 function OpenThread(dwDesiredAccess: DWord; bInheritHandle: Boolean; dwThreadId: DWord): THandle; stdcall; external kernel32;
 
@@ -207,6 +212,27 @@ begin
 
     Inc(PImport);
   end;
+end;
+
+procedure PatchCopying(Dest: Pointer; Source: Pointer; Length: Integer);
+asm
+  PUSH ESI
+  PUSH EDI
+
+  MOV ESI, EDX    // source
+  MOV EDI, EAX    // destionation
+  //MOV ECX, Length   // already there
+  CLD
+  REP MOVSB
+
+  POP EDI
+  POP ESI
+end;
+   
+procedure Patch(var Dest; Data: DWord);
+asm
+  { The Register calling convention parameter assignment: EAX > EDX > ECX > stack }
+  LOCK XCHG DWORD PTR [EAX], EDX
 end;
 
 end.
