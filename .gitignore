@@ -1,0 +1,9 @@
+*.dcu
+*.dsk
+*.dof
+*.~*
+*Test.exe
+/DelphiZLib.123
+/PNGImage
+/Tests/*.cfg
+/Tests/*.exe
