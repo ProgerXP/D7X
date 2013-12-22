@@ -152,7 +152,7 @@ object MainForm: TMainForm
     Top = 88
     Width = 33
     Height = 33
-    Hint = 'Custom ShwUnderControl'
+    Hint = 'ShwUnderControl set to the other button'
     Glyph.Data = {
       96010000424D9601000000000000760000002800000018000000180000000100
       0400000000002001000000000000000000001000000000000000000000000000
@@ -170,7 +170,7 @@ object MainForm: TMainForm
     PopupMenu = pm
     OnClick = MenuSpeedButton1Click
     PopupMenuAlt = pmAlt
-    UnderControl = SpeedButton1
+    UnderControl = PNGSpeedButton1
   end
   object WebLabel1: TWebLabel
     Left = 152
@@ -178,7 +178,44 @@ object MainForm: TMainForm
     Width = 74
     Height = 13
     Caption = 'D7X homepage'
+    Font.Charset = DEFAULT_CHARSET
+    Font.Color = clNavy
+    Font.Height = -11
+    Font.Name = 'MS Sans Serif'
+    Font.Style = [fsUnderline]
+    ParentFont = False
     URL = 'http://proger.i-forge.net/D7X_-_Delphi_7_eXtension_library/7FB'
+    HoverFont.Charset = DEFAULT_CHARSET
+    HoverFont.Color = clBlue
+    HoverFont.Height = -11
+    HoverFont.Name = 'MS Sans Serif'
+    HoverFont.Style = []
+  end
+  object MenuSpeedButton3: TMenuSpeedButton
+    Left = 128
+    Top = 88
+    Width = 33
+    Height = 33
+    Hint = 
+      'Left-click for default action, right-click for alternative (set ' +
+      'as default)'
+    Glyph.Data = {
+      96010000424D9601000000000000760000002800000018000000180000000100
+      0400000000002001000000000000000000001000000000000000000000000000
+      8000008000000080800080000000800080008080000080808000C0C0C0000000
+      FF0000FF000000FFFF00FF000000FF00FF00FFFF0000FFFFFF00777777777777
+      7777777007777777777777777777770FF0777777777777777707770FF0777777
+      77777777770070FF0777777777777777770F00FF0777777000000000000FFFF0
+      7777778F88888888880FFFF00007778FFFF00FFFFF0FFFFFF077778FFFF0B0FF
+      FF0FFFFF0777778FFFFF0B0FFF0FFFF07777778FFFFF0FB0FF0FFF007777778F
+      FFFFF0FB0F0FF0807777778FFFF000B0000F0F807777778FFFFF0BF0FF00FF80
+      7777778FFFFFF0BF0FFFFF807777778FFFFFF0FBF0FFFF807777778FFF0000F0
+      000FFF807777778FFFF0BFBF0FFFFF807777778FFFFF0BFBF0FFFF807777778F
+      FFFF0FBFBF0FFF807777778FFFFFF0000000FF807777778FFFFFFFFFFFFFFF80
+      7777778FFFFFFFFFFFFFFFF07777777888888888888888877777}
+    OnClick = MenuSpeedButton1Click
+    PopupMenuAlt = pmAltDef
+    ClicksDefault = True
   end
   object edDialog: TEdit
     Left = 8
@@ -211,7 +248,7 @@ object MainForm: TMainForm
     Top = 32
   end
   object pm: TPopupMenu
-    Left = 136
+    Left = 96
     Top = 112
     object est1: TMenuItem
       Caption = 'Test'
@@ -241,8 +278,8 @@ object MainForm: TMainForm
     end
   end
   object pmAlt: TPopupMenu
-    Left = 168
-    Top = 112
+    Left = 104
+    Top = 120
     object MenuItem1: TMenuItem
       Caption = 'This is'
     end
@@ -251,6 +288,19 @@ object MainForm: TMainForm
     end
     object MenuItem3: TMenuItem
       Caption = 'popup menu'
+    end
+  end
+  object pmAltDef: TPopupMenu
+    Left = 144
+    Top = 112
+    object Alternativebydefault1: TMenuItem
+      Caption = 'Alternative by default'
+      Default = True
+      OnClick = Clickanditllbecomethedefault1Click
+    end
+    object Clickanditllbecomethedefault1: TMenuItem
+      Caption = 'Click and it'#39'll become the default!'
+      OnClick = Clickanditllbecomethedefault1Click
     end
   end
 end
