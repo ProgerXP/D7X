@@ -32,10 +32,15 @@ type
     MenuItem2: TMenuItem;
     MenuItem3: TMenuItem;
     WebLabel1: TWebLabel;
+    MenuSpeedButton3: TMenuSpeedButton;
+    pmAltDef: TPopupMenu;
+    Alternativebydefault1: TMenuItem;
+    Clickanditllbecomethedefault1: TMenuItem;
     procedure SpeedButton1Click(Sender: TObject);
     procedure SpeedButton2Click(Sender: TObject);
     procedure MenuSpeedButton1Click(Sender: TObject);
     procedure FormCreate(Sender: TObject);
+    procedure Clickanditllbecomethedefault1Click(Sender: TObject);
   private
     { Private declarations }
   public
@@ -75,6 +80,12 @@ begin
       with TControl(Controls[I]) do
         if Hint = '' then
           Hint := Controls[I].ClassName;
+end;
+
+procedure TMainForm.Clickanditllbecomethedefault1Click(Sender: TObject);
+begin
+  TMenuItem(Sender).Default := True;
+  ShowMessage('Clicked!'#10#10 + TMenuItem(Sender).Caption);
 end;
 
 end.
