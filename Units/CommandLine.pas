@@ -200,6 +200,9 @@ type
 
     Help, HelpDetails: WideString;
 
+    // Expects Name RT_RCDATA string being encoded as UTF-8.
+    class function LoadLongResString(Name: String): WideString;
+
     constructor Create; virtual;
     destructor Destroy; override;
 
@@ -868,6 +871,18 @@ begin
 end;
 
 { TCLApplication }
+                                               
+class function TCLApplication.LoadLongResString(Name: String): WideString;
+begin
+  with TResourceStream.Create(hInstance, Name, RT_RCDATA) do
+    try
+      SetLength(Name, Size);
+      ReadBuffer(Name[1], Size);
+      Result := UTF8Decode(Name);
+    finally
+      Free;
+    end;
+end;
 
 constructor TCLApplication.Create;
 begin
